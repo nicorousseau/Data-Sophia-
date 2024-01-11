@@ -7,7 +7,6 @@ class Autoreg() :
         self.data = data
         self.len_data = len(data)
         self.coeffs = None
-        self.predictions = []
         self.lags = lags
 
     def fit(self) :
@@ -21,10 +20,11 @@ class Autoreg() :
         return self.coeffs
 
     def predict(self, n) :
+        predictions = []
         for i in range (n) : 
-            self.predictions.append(np.dot(np.flip(self.coeffs), self.data[-len(self.coeffs):]))
+            predictions.append(np.dot(np.flip(self.coeffs), self.data[-len(self.coeffs):]))
             self.data = np.append(self.data, self.predictions[-1])
-        return self.predictions
+        return predictions
     
     def plot(self, n) : 
         fig, axs = plt.subplots(3)
