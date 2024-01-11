@@ -16,7 +16,7 @@ class Autoreg() :
         mat_cov = np.dot(X,np.transpose(X))
         Gamma = mat_cov[0,1:]
         mat_cov = mat_cov[:self.lags,:self.lags]
-        pinv = np.linalg.pinv(mat_cov, rcond=1e-3)
+        pinv = np.linalg.pinv(mat_cov, rcond=1e-4)
         self.coeffs = np.dot(pinv, Gamma)
         return self.coeffs
 
@@ -28,36 +28,12 @@ class Autoreg() :
     
     def plot(self, n) : 
         fig, axs = plt.subplots(3)
-        axs[0].plot(self.predict(n))
-        axs[0].set_title('predictions')
-        axs[1].plot(self.data[:self.len_data])
-        axs[1].set_title('data')
+        axs[0].plot(self.data[:self.len_data])
+        axs[0].set_title('data')
+        axs[1].plot(self.predict(n))
+        axs[1].set_title('predictions')
         axs[2].plot(self.data)
         axs[2].set_title('data + predictions')
         plt.tight_layout()
         plt.show()
-
-
-from scipy.io import wavfile
-import pickle 
-
-with open('time_series\data.pkl', 'rb') as fichier:
-    data = pickle.load(fichier)
-
-sample_rate = data[0][0]
-context = 0.05
-predict = 0.005
-context_size = int(context * sample_rate)
-predict_size = int(predict * sample_rate)
-
-X = data[0][1][2000:4000]
-
-
-#X = np.linspace(0, 110, 2000)
-#X = np.sin(X/100) + np.sin(2*X/3) + np.sin(X/2)**2 + np.random.normal(0, 0.3, 2000)
-
-model = Autoreg(X, 400)
-model.fit()
-model.plot(2000)
-
 
