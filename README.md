@@ -1,3 +1,3 @@
 # Data-Sophia-
 
-This is the best project of the world 
+Durant deux mois, avec Hippolyte Moranne, nous allons étudier le PLC. 
