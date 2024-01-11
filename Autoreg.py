@@ -16,7 +16,8 @@ class Autoreg() :
         mat_cov = np.dot(X,np.transpose(X))
         Gamma = mat_cov[0,1:]
         mat_cov = mat_cov[:self.lags,:self.lags]
-        self.coeffs = np.dot(np.linalg.inv(mat_cov), Gamma)
+        pinv = np.linalg.pinv(mat_cov, rcond=1e-3)
+        self.coeffs = np.dot(pinv, Gamma)
         return self.coeffs
 
     def predict(self, n) :
@@ -49,11 +50,11 @@ predict = 0.005
 context_size = int(context * sample_rate)
 predict_size = int(predict * sample_rate)
 
-#X = data[0][1][2000:4000]
+X = data[0][1][2000:4000]
 
 
-X = np.linspace(0, 110, 2000)
-X = np.sin(X/100) + np.sin(2*X/3) + np.sin(X/2)**2 + np.random.normal(0, 0.3, 2000)
+#X = np.linspace(0, 110, 2000)
+#X = np.sin(X/100) + np.sin(2*X/3) + np.sin(X/2)**2 + np.random.normal(0, 0.3, 2000)
 
 model = Autoreg(X, 400)
 model.fit()
