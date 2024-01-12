@@ -26,7 +26,7 @@ for i in range (len(files_path)):
     if (is_mono(time_series)):
         data.append([sample_rate, time_series])
     else:
-        data.append([sample_rate, time_series[:,0]])
+        data.append([sample_rate, np.mean(np.array(time_series), axis=1).tolist()])
 
 with open('time_series\data.pkl', 'wb') as fichier:
     pickle.dump(data, fichier)
