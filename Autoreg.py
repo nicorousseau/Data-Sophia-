@@ -1,5 +1,5 @@
 import numpy as np 
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt 
 
 class Autoreg() : 
     """This class allows you to make a simple linear autoregression"""
