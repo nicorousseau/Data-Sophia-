@@ -9,7 +9,7 @@ def nmse(y, y_predicted) :
     norm_diff = np.square(diff).sum()
     norm_y = np.square(y).sum()
     try : 
-        res = 10*np.log(norm_diff/norm_y)
+        res = 10*np.log10(norm_diff/norm_y)
     except : 
         print(f"norm_diff/norm_y = {norm_diff/norm_y}")
     return res
