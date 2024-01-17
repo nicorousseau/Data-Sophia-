@@ -4,6 +4,8 @@ import pickle
 from statsmodels.tsa.ar_model import AutoReg
 from scipy.io import wavfile
 
+from Autoreg import Autoreg
+
 
 with open('time_series\data.pkl', 'rb') as fichier:
     data = pickle.load(fichier)
@@ -13,15 +15,16 @@ context_length = 0.1                                 #### Durée en seconde de l
 predict_length = 0.025                               #### Durée en seconde de la fenêtre de prédiction
 context_size = int(context_length * sample_rate)     #### Taille en nombre de points de la fenêtre de contexte
 predict_size = int(predict_length * sample_rate)     #### Taille en nombre de points de la fenêtre de prédiction
-crossfade_size = predict_size // 4            #### Taille en nombre de points de la fenêtre de crossfade
+crossfade_size = predict_size // 4             #### Taille en nombre de points de la fenêtre de crossfade
 
 
 song_1 = data[0][1][2000:200000]               #### On prend un morceau de la série temporelle
 song_predicted = song_1.copy()
 song_1_empty = song_1.copy()
 song_predicted_crossfaded = song_1.copy()
+song_predicted_crossfaded_2 = song_1.copy()
 
-pos_loss_packets = np.random.randint(context_size, len(song_1) - predict_size, 20)  #### On choisit 10 positions de paquets perdus au hasard
+pos_loss_packets = np.random.randint(context_size, len(song_1) - predict_size, 30)  #### On choisit 10 positions de paquets perdus au hasard
 pos_loss_packets = np.sort(pos_loss_packets)
 
 crossfade = np.sqrt(np.linspace(1,0,crossfade_size))   #### Fenêtre de crossfade
@@ -39,15 +42,22 @@ for pos in pos_loss_packets :
     model = AutoReg(context, lags=300)
     model_fit = model.fit()
 
-    # make predictions
-    predictions = model_fit.predict(start=context_size, end=context_size + predict_size + crossfade_size - 1, dynamic=False)
+    AR = Autoreg(context)
+    AR.fit(1000, 300)
+    AR.predict(predict_size + crossfade_size)
 
+    # make predictions_1
+    predictions_1 = model_fit.predict(start=context_size, end=context_size + predict_size + crossfade_size - 1, dynamic=False)
+    predictions_2 = AR.predictions
     # complete song        
     song_1_empty[pos: pos + predict_size] = np.zeros(predict_size)
-    song_predicted[pos: pos + predict_size] = predictions[:predict_size]
+    song_predicted[pos: pos + predict_size] = predictions_1[:predict_size]
 
-    song_predicted_crossfaded[pos: pos + predict_size] = predictions[:predict_size]
-    song_predicted_crossfaded[pos + predict_size: pos + predict_size + crossfade_size] = (crossfade * predictions[predict_size:] + (1-crossfade) * crossfade_window)
+    song_predicted_crossfaded[pos: pos + predict_size] = predictions_1[:predict_size]
+    song_predicted_crossfaded[pos + predict_size: pos + predict_size + crossfade_size] = (crossfade * predictions_1[predict_size:] + (1-crossfade) * crossfade_window)
+
+    song_predicted_crossfaded_2[pos: pos + predict_size] = predictions_2[:predict_size]
+    song_predicted_crossfaded_2[pos + predict_size: pos + predict_size + crossfade_size] = (crossfade * predictions_2[predict_size:] + (1-crossfade) * crossfade_window)
 
 song_1 = np.array(song_1)
 
@@ -60,7 +70,7 @@ song_predicted = song_predicted.astype(np.int16)
 song_predicted_crossfaded = np.array(song_predicted_crossfaded)
 song_predicted_crossfaded = song_predicted_crossfaded.astype(np.int16)
 
-fig, axs = plt.subplots(4)
+fig, axs = plt.subplots(5)
 
 axs[0].plot(song_1)
 axs[0].set_title('song_1')
@@ -74,6 +84,9 @@ axs[2].set_title('song_predicted')
 axs[3].plot(song_predicted_crossfaded)
 axs[3].set_title('song_predicted_crossfaded')
 
+axs[4].plot(song_predicted_crossfaded_2)
+axs[4].set_title('song_predicted_crossfaded_2')
+
 plt.tight_layout()
 
 plt.show()
@@ -83,3 +96,4 @@ wavfile.write('predictions_AR\song_1.wav', sample_rate, song_1)
 wavfile.write('predictions_AR\song_1_empty.wav', sample_rate, song_1_empty)
 wavfile.write('predictions_AR\song_predicted.wav', sample_rate, song_predicted)
 wavfile.write('predictions_AR\song_1_predicted_crossfaded.wav', sample_rate, song_predicted_crossfaded)
+wavfile.write('predictions_AR\song_1_predicted_crossfaded_2.wav', sample_rate, song_predicted_crossfaded_2)
