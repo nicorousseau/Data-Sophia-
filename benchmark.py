@@ -18,9 +18,9 @@ def mel_cs(y, y_predicted, sr) :
     y = np.array(y)
     y_predicted = np.array(y_predicted)
     y = y.astype(np.float64)
-    y = y/32768
+    y = y/np.iinfo(np.int16).max
     y_predicted =y_predicted.astype(np.float64)
-    y_predicted = y_predicted/32768
+    y_predicted = y_predicted/np.iinfo(np.int16).max
     sample_rate = sr
     win_length = 512
     n_fft = 1024#int(np.floor(np.log2(len(y)))) = 9 dans notre cas#
