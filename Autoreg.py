@@ -31,7 +31,7 @@ class Autoreg() :
             mat_cov = np.dot(X,np.transpose(X))
             Gamma = mat_cov[0,1:]
             mat_cov = mat_cov[:lags,:lags]
-            pinv = np.linalg.pinv(mat_cov, rcond=1e-4)
+            pinv = np.linalg.pinv(mat_cov, rcond=1e-2)
             self.coeffs = np.dot(pinv, Gamma)
 
     def predict(self, predict_size) :
