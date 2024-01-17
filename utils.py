@@ -42,9 +42,7 @@ def forecast(train, lags = 128, thresh = 20, crossfade = False, format = np.int1
         end = 2*n_train+ n_train//2 -1
     
     pred = model_fit.predict(start = start, end = end, dynamic = True)
-    print(f"nb depassement : {np.sum(pred > clip_value)}")
     if (np.sum(np.abs(pred) > clip_value) > thresh) and (lags > 16): 
-        print(f"try to adapt to {lags//2}")
         new_pred = forecast(train, lags//2, thresh, crossfade, format)
         if np.sum(np.abs(pred) > clip_value) > np.sum(np.abs(new_pred) > clip_value) : 
             return new_pred
