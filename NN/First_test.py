@@ -8,6 +8,12 @@ from torch.utils.data import DataLoader, random_split, Dataset
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import scipy.signal as sc
+
+#Definition of the constants
+SAMPLE_RATE = 32000
+lambda1 = 0.995
+lambda2 = 0.005
 
 class CustomAudioDataset(Dataset):
     def __init__(self, file_paths, transform1=None, transform2 = None):
@@ -46,11 +52,13 @@ def convert_to_mono(audio_waveform):
         audio_waveform = torch.mean(audio_waveform, dim=0, keepdim=True)
     return audio_waveform
 
-transform1 = torchaudio.transforms.Resample(orig_freq=44100, new_freq=16000)
+transform1 = torchaudio.transforms.Resample(orig_freq=44100, new_freq=SAMPLE_RATE)
 transform2 = convert_to_mono
 
 # Creation of the dataset
 custom_audio_dataset = CustomAudioDataset(file_list, transform1, transform2)
+
+print(custom_audio_dataset[0][1].size())
 
 # Split the dataset into train and test
 train_ratio = 0.8
@@ -66,8 +74,6 @@ shuffle = True
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle)
 
-print(train_dataset[0])
-
 # Define the network
 
 class Net(nn.Module):
@@ -75,15 +81,15 @@ class Net(nn.Module):
         super(Net, self).__init__()
         self.flatten = nn.Flatten()
         self.sequential = nn.Sequential(
-        nn.Linear(186, 186), 
+        nn.Linear(372, 372), 
         nn.ReLU(),
+        nn.Linear(372, 186),
+        nn.ReLU(),
+        nn.Linear(186, 186),
+        nn.Sigmoid(),
         nn.Linear(186, 93),
-        nn.ReLU(),
-        nn.Linear(93, 93),
         nn.Sigmoid(),
-        nn.Linear(93, 47),
-        nn.Sigmoid(),
-        nn.Linear(47, 47))
+        nn.Linear(93, 93))
 
     def forward(self, x):
         x = self.flatten(x)
@@ -93,7 +99,9 @@ class Net(nn.Module):
 net = Net()
 
 # Define a Loss function and optimizer
-criterion = nn.MSELoss(reduction='mean')
+loss1 = nn.MSELoss(reduction='mean')
+loss2 = nn.MSELoss(reduction='mean')
+
 optimizer = optim.Adam(net.parameters(), lr=0.001)
 
 # Train the network
@@ -106,7 +114,23 @@ for epoch in range(1):  # loop over the dataset multiple times
         optimizer.zero_grad()
 
         outputs = net(inputs)
-        loss = criterion(outputs, labels)
+
+
+
+        # Conversion des tenseurs PyTorch en tableaux NumPy
+        outputs_np = torch.concat((inputs, outputs), dim = 1).detach().numpy()
+        labels_np = torch.concat((inputs, labels), dim = 1).detach().numpy()
+
+        # Calcul des spectrogrammes
+        spectrogram_outputs = np.array([sc.spectrogram(outputs_np[i], fs=SAMPLE_RATE, window = 'tukey', nperseg = 256, noverlap = 2, nfft = 512, mode = 'magnitude')[2] for i in range(len(outputs_np))])
+        spectrogram_labels = np.array([sc.spectrogram(labels_np[i], fs=SAMPLE_RATE, window = 'tukey', nperseg = 256, noverlap = 2, nfft = 512, mode = 'magnitude')[2] for i in range(len(labels_np))])
+
+        # Conversion des tableaux NumPy en tenseurs PyTorch
+        spectrogram_outputs = torch.tensor(spectrogram_outputs)
+        spectrogram_labels = torch.tensor(spectrogram_labels)
+
+        # Calcul de la loss
+        loss = lambda1 * loss1(outputs, labels) + lambda2 * loss2(spectrogram_outputs, spectrogram_labels)
         loss.backward()
         optimizer.step()
 
@@ -143,3 +167,5 @@ axs[0].plot(actuals_train[0].detach().numpy()[0], color='blue')
 axs[1].plot(predicted_labels[0].detach().numpy()[0], color='red')
 axs[1].plot(actual_labels[0].detach().numpy()[0], color='blue')
 plt.show()
+
+
