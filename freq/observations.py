@@ -3,6 +3,7 @@ import scipy.io.wavfile as wav
 import scipy.signal as signal
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy
 
 
 #### Constantes ####
@@ -32,85 +33,33 @@ index = [np.random.randint(0, len(songs[0])-sample_size) for _ in range(1)]
 samples = [np.array(songs[0][i:i+sample_size]) for i in index]
 samples = np.array(samples)
 
+freq = np.linspace(0, SampleRate//2, sample_size//2)
 
 def freq_max_sorted(fft, n):
 
     '''Renvoie les n plus grandes valeurs de fft, en mettant à 0 les autres valeurs'''
 
     fft_copy = np.copy(fft)
-    rfft = np.abs(fft_copy.real)
-    imfft = np.abs(fft_copy.imag)
+    fft_abs = np.abs(fft_copy)
+
+    mask = [False]
     # Renvoie une liste de booléen de même taille que values, avec True si la valeur correspondante est un maximum local
-    rmask_1 = rfft[1:]>rfft[:-1]
-    rmask_2 = rfft[:-1]>rfft[1:]
-
-    imask_1 = imfft[1:]>imfft[:-1]
-    imask_2 = imfft[:-1]>imfft[1:]
-
-    max_locaux = [False for _ in range (len(fft_copy))]
-
-    for i in range(len(fft_copy)-2):
-        if rmask_1[i] and rmask_2[i+1] :
-            max_locaux[i+1] = True
-        if imask_1[i] and imask_2[i+1] :
-            max_locaux[i+1] = True
-
-    if rmask_2[0] :
-        max_locaux[0] = True
-    if rmask_1[-1] :
-        max_locaux[-1] = True
-    if imask_2[0] :
-        max_locaux[0] = True
-    if imask_1[-1] :
-        max_locaux[-1] = True
+    for i in range (1, len(fft_copy)-1) : 
+        if (fft_abs[i] > fft_abs[i-1]) and (fft_abs[i] > fft_abs[i+1]) : 
+            mask.append(True)
+        else :
+            mask.append(False)
+    mask.append(False)
 
     # On inverse la liste de booléen pour avoir True si la valeur correspondante n'est pas un maximum local
-    inversed_max_locaux = [not i for i in max_locaux]
-    
+    inversed_max_locaux = [not i for i in mask]
+
     # On met à 0 les valeurs qui ne sont pas des maximums locaux
     fft_copy[inversed_max_locaux] = 0
-
-    # On trie les valeurs
-    rindexes_sorted = np.argsort(rfft)[n//2::-1]
-    imindexes_sorted = np.argsort(imfft)[n//2::-1]
-
-    # On concatène les deux listes d'indexes
-    indexes_sorted = np.concatenate((rindexes_sorted, imindexes_sorted))
-
-    # On met à 0 les valeurs qui ne sont pas parmi les n plus grandes
-    fft_copy[indexes_sorted] = 0
-
-    return fft_copy
-
-def freq_max_sorted_2(fft, n):
-
-    '''Renvoie les n plus grandes valeurs de fft, en mettant à 0 les autres valeurs'''
-
-    fft_copy = np.copy(fft)
-    fft_copy = np.abs(fft_copy)
-    # Renvoie une liste de booléen de même taille que values, avec True si la valeur correspondante est un maximum local
-    mask_1 = fft_copy[1:]>fft_copy[:-1]
-    mask_2 = fft_copy[:-1]>fft_copy[1:]
-
-    max_locaux = [False for _ in range (len(fft_copy))]
-
-    for i in range(len(fft_copy)-2):
-        if mask_1[i] and mask_2[i+1] :
-            max_locaux[i+1] = True
-    if mask_2[0] :
-        max_locaux[0] = True
-    if mask_1[-1] :
-        max_locaux[-1] = True
-
-
-    # On inverse la liste de booléen pour avoir True si la valeur correspondante n'est pas un maximum local
-    inversed_max_locaux = [not i for i in max_locaux]
+    fft_abs[inversed_max_locaux] = 0
     
-    # On met à 0 les valeurs qui ne sont pas des maximums locaux
-    fft_copy[inversed_max_locaux] = 0
-
     # On trie les valeurs
-    indexes_sorted = np.argsort(fft)[n::-1]
+    indexes_sorted = np.argsort(fft_abs, kind = 'stable')[:len(fft_abs)-n]
 
     # On met à 0 les valeurs qui ne sont pas parmi les n plus grandes
     fft_copy[indexes_sorted] = 0
@@ -126,7 +75,7 @@ def optim(signal, nb_coeffs):
     x = np.linspace(-1, 1, sample_size)
     for sigma in sigmas : 
         gaussian_vector = np.exp(-np.square(x)/sigma)
-        fft = np.fft.fft(signal)
+        fft = scipy.fft.fft(signal)
 
         fft_1 = freq_max_sorted(fft[:int(sample_size/2)], nb_coeffs)
         fft_1_real = np.convolve(np.real(fft_1), gaussian_vector, mode = 'same')
@@ -153,21 +102,28 @@ def optim(signal, nb_coeffs):
         fft_1 = fft_1_real + 1j*fft_1_imag
         ifft_1 = np.real(np.fft.ifft(fft_1, n = sample_size))*2
         return ifft_1
-    
-def optim_2(signal, nb_coeffs):
-    fft = np.fft.fft(signal)
-    fft_1 = freq_max_sorted(fft[:int(sample_size/2)], nb_coeffs)
-    fft_2 = freq_max_sorted_2(fft[:int(sample_size/2)], nb_coeffs)
-    ifft_1 = np.real(np.fft.ifft(fft_1, n = sample_size))*2
-    ifft_2 = np.real(np.fft.ifft(fft_2, n = sample_size))*2
-    if rmse(ifft_1, signal) < rmse(ifft_2, signal) :
-        print("On prend la première méthode")
 
 for sample in samples :
-        fft = np.fft.fft(sample)
-        fft_1 = freq_max_sorted(fft[:int(sample_size/2)], nb_coeffs)
-        ifft_1 = np.real(np.fft.ifft(fft_1, n = sample_size))*2
-        plt.plot(ifft_1, color = 'red' , label = 'reconstructed')
+        fft = scipy.fft.fft(sample)
+        fft_1 = freq_max_sorted(fft, 2*nb_coeffs)
+        print(len(fft_1))
+        print(len(fft))
+
+        fig, axs = plt.subplots(3)
+        axs[0].plot(np.real(fft_1), color = 'red' , label = 'reconstructed')
+        axs[0].plot(np.real(fft), color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
+        plt.legend()
+        axs[1].plot(np.imag(fft_1), color = 'red' , label = 'reconstructed')
+        axs[1].plot(np.imag(fft), color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
+        plt.legend()
+        axs[2].plot(np.abs(fft_1), color = 'red' , label = 'reconstructed')
+        axs[2].plot(np.abs(fft), color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
+        plt.legend()
+        plt.show()
+
+        ifft_1 = np.real(scipy.fft.ifft(fft_1, n=sample_size))
+        plt.plot(ifft_1, color = 'red' , label = 'reconstructed',)
         plt.plot(sample, color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
         plt.legend()
         plt.show()
+
