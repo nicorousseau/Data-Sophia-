@@ -2,9 +2,7 @@ import numpy as np
 from librosa.feature import melspectrogram
 from librosa.display import specshow
 import matplotlib.pyplot as plt
-def nmse(y, y_predicted) : 
-    y = np.array(y, dtype=np.float64)
-    y_predicted = np.array(y_predicted, dtype=np.float64)
+def nmse(y, y_predicted) :
     diff = y - y_predicted
     norm_diff = np.square(diff).sum()
     norm_y = np.square(y).sum()
@@ -13,6 +11,17 @@ def nmse(y, y_predicted) :
     except : 
         print(f"norm_diff/norm_y = {norm_diff/norm_y}")
     return res
+
+def nmse_mean(audio, audio_filled, pos_gap, taille_paquet):
+    list_nmse = []
+    
+    for k in range(len(pos_gap)) : 
+        original = audio[pos_gap[k]: pos_gap[k]+taille_paquet]
+        predicted = audio_filled[pos_gap[k]: pos_gap[k]+taille_paquet]
+        list_nmse.append(nmse(original, predicted))
+    
+    return np.mean(list_nmse), list_nmse
+    
 
 def mel_cs(y, y_predicted, sr) : 
     y = np.array(y)
