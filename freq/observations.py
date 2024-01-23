@@ -5,11 +5,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy
 
-
 #### Constantes ####
 sample_size = 2048
 SampleRate = 44100
-nb_coeffs = 16
+nb_coeffs = 32
 
 song_directory = r"C:\Users\nicor\Documents\Mines\Data Sophia\Projet\songs"
 
@@ -103,27 +102,31 @@ def optim(signal, nb_coeffs):
         ifft_1 = np.real(np.fft.ifft(fft_1, n = sample_size))*2
         return ifft_1
 
-for sample in samples :
-        fft = scipy.fft.fft(sample)
-        fft_1 = freq_max_sorted(fft, 2*nb_coeffs)
-        print(len(fft_1))
-        print(len(fft))
+def crossfade(signal, n):
+    crossfade_length = len(signal) // 10  # Longueur du crossfade (10% de la longueur du signal)
+    crossfade = np.square(np.linspace(0, 1, crossfade_length))  # Courbe du crossfade (de 0 à 1)
 
-        fig, axs = plt.subplots(3)
-        axs[0].plot(np.real(fft_1), color = 'red' , label = 'reconstructed')
-        axs[0].plot(np.real(fft), color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
-        plt.legend()
-        axs[1].plot(np.imag(fft_1), color = 'red' , label = 'reconstructed')
-        axs[1].plot(np.imag(fft), color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
-        plt.legend()
-        axs[2].plot(np.abs(fft_1), color = 'red' , label = 'reconstructed')
-        axs[2].plot(np.abs(fft), color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
-        plt.legend()
-        plt.show()
+    signal_1 = signal[:crossfade_length]  # Première partie du signal
+    signal_2 = signal[len(signal) - crossfade_length:]  # Deuxième partie du signal
+    signal_center = signal[crossfade_length:len(signal) - crossfade_length].tolist()  # Centre du signal
 
-        ifft_1 = np.real(scipy.fft.ifft(fft_1, n=sample_size))
-        plt.plot(ifft_1, color = 'red' , label = 'reconstructed',)
-        plt.plot(sample, color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
-        plt.legend()
-        plt.show()
+    crossfade_window = crossfade * signal_1 + (1 - crossfade) * signal_2  # Fenêtre de crossfade
+    crossfade_window = crossfade_window.tolist()  # Conversion en liste
+
+    signal_total = [signal_center + crossfade_window for _ in range(n)]  # Signal total
+
+    return np.array(signal_total).flatten()  # Conversion en array
+
+for sample in samples : 
+    fft = scipy.fft.fft(sample)
+    fft_1 = freq_max_sorted(fft, nb_coeffs)
+    ifft_1 = np.real(scipy.fft.ifft(fft_1, n=sample_size))
+    #signal_rebuilt = crossfade(ifft_1, 100)
+    #sample = crossfade(sample, 100)
+    wav.write("test.wav", SampleRate, ifft_1.astype(np.int16))
+    wav.write("signal.wav", SampleRate, sample.astype(np.int16))
+    plt.plot(ifft_1, color = 'red' , label = 'reconstructed')
+    plt.plot(sample, color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
+    plt.legend()
+    plt.show()
 
