@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import statsmodels
 from scipy.io import wavfile
 from scipy.signal import resample
+import scipy.fft as fft
 import os
 import pathlib
 
@@ -91,6 +92,43 @@ def audio_predictions(audio, pos_gap, taille_paquet, order = 128, adapt = False,
         else : 
             AR_filled[x:x+n] = pred
     return AR_filled
+
+def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
+    audio_corr = audio.copy()
+    temps_paquet = taille_paquet/sample_rate
+    for pos in pos_gap :
+        if pos>2*taille_paquet :
+            taille_train = 2*taille_paquet
+        else : 
+            taille_train = taille_paquet
+        train = audio_corr[pos-taille_train: pos]
+        #Finding the period of the signal with autocorrelation
+        autocor = np.correlate(train, train, mode = 'same')
+        ind = _finding_local_max(autocor)
+        period = np.abs(ind[0]- ind[1])/sample_rate
+        #Fixing parameters needed
+        x = 2*temps_paquet / period
+        t_phased =  2*temps_paquet- np.floor(x)*period
+        #computing fft and dephasing it 
+        fft_signal = fft.fft(train)
+        freq = fft.fftfreq(len(train), d=1/sample_rate)
+        dephasage = np.exp(1j*2*np.pi*t_phased*freq)
+        fft_signal = fft_signal * dephasage
+        
+        pred = np.real(fft.ifft(fft_signal))[:taille_paquet]
+        audio_corr[pos:pos+taille_paquet] = pred
+    return audio_corr
+
+def _finding_local_max(audio):
+    r = np.concatenate((audio[1:], [0]))
+    l = np.concatenate(([0],audio[:-1]))
+    mask_r = audio > r 
+    mask_l = audio > l 
+    mask = mask_r*mask_l
+    list_max = np.zeros(len(audio))
+    list_max[mask] = audio[mask]
+    ind = np.argsort(list_max)[::-1]
+    return ind
 
 
 def write_wav(audio, samplerate, name, new_samplerate = None,  directory = None) :
