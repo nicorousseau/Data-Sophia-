@@ -34,21 +34,20 @@ def spectrogram(signal, samplerate = 22050, n_fft = 512, window = "haming", wind
 def specshow(spec) :
     pass
 
-def forecast(train, lags = 128, n_thresh = 1, clip_value = 1.3, crossfade_size = None):
+def forecast(train, n_pred, lags = 128, n_thresh = 1, clip_value = 1.3, crossfade_size = None):
 
     model = statsmodels.tsa.ar_model.AutoReg(train, lags)
     model_fit = model.fit()
     n_train = len(train)
-    start = n_train
     clip_value = clip_value*np.max(np.abs(train))#np.iinfo(format).max
     if crossfade_size is None: 
-        end = 2*n_train-1
+        end = n_train+n_pred-1
     else : 
-        end = 2*n_train+ n_train//int(1/crossfade_size) -1
+        end = n_train+ n_pred*(1 + 1//int(1/crossfade_size)) -1
     
-    pred = model_fit.predict(start = start, end = end, dynamic = True)
-    if (np.sum(np.abs(pred[:2*n_train-1]) > clip_value) > n_thresh) and (lags > 32): 
-        new_pred = forecast(train, lags//2, n_thresh = n_thresh, crossfade_size = crossfade_size)
+    pred = model_fit.predict(start = n_train, end = end, dynamic = True)
+    if (np.sum(np.abs(pred[:2*n_train-1]) > clip_value) > n_thresh) and (lags >= 32): 
+        new_pred = forecast(train, n_pred, lags//2, n_thresh = n_thresh, crossfade_size = crossfade_size)
         if np.sum(np.abs(pred[:2*n_train-1]) > clip_value) > np.sum(np.abs(new_pred[:2*n_train-1]) > clip_value) : 
             return new_pred
         else :
@@ -71,16 +70,16 @@ def audio_predictions(audio, pos_gap, taille_paquet, order = 128, adapt = False,
         _type_: _description_
     """
     AR_filled = audio.copy()
+    taille_train = 3*taille_paquet
     for x in pos_gap : 
-        paquet = np.copy(audio[x-taille_paquet:x])
-        n = taille_paquet
+        train = np.copy(audio[x-taille_train:x])
         if adapt : 
-            pred = forecast(paquet, order, n_thresh = 1, clip_value=1.3, crossfade_size=crossfade_size)
+            pred = forecast(train, taille_paquet, lags = order, n_thresh = 1, clip_value=1.3, crossfade_size=crossfade_size)
 
         else : 
-            model = statsmodels.tsa.ar_model.AutoReg(paquet, order)
+            model = statsmodels.tsa.ar_model.AutoReg(train, order)
             model = model.fit()
-            pred = model.predict(start = n, end = 2*n-1, dynamic=True)
+            pred = model.predict(start = len(train), end = len(train)+taille_paquet-1, dynamic=True)
             if p_value :
                 print(model.pvalues)
         
@@ -90,15 +89,15 @@ def audio_predictions(audio, pos_gap, taille_paquet, order = 128, adapt = False,
             crossfaded = pred[taille_paquet:]*(1-window) + window*AR_filled[x+taille_paquet:x+taille_paquet+n_cross]
             AR_filled[x:x+taille_paquet+n_cross] = np.concatenate((pred[:taille_paquet],crossfaded))
         else : 
-            AR_filled[x:x+n] = pred
+            AR_filled[x:x+taille_paquet] = pred
     return AR_filled
 
 def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
     audio_corr = audio.copy()
     temps_paquet = taille_paquet/sample_rate
     for pos in pos_gap :
-        if pos>2*taille_paquet :
-            taille_train = 2*taille_paquet
+        if pos>1.5*taille_paquet :
+            taille_train = int(1.5*taille_paquet)
         else : 
             taille_train = taille_paquet
         train = audio_corr[pos-taille_train: pos]
@@ -108,7 +107,7 @@ def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
         period = np.abs(ind[0]- ind[1])/sample_rate
         #Fixing parameters needed
         x = 2*temps_paquet / period
-        t_phased =  2*temps_paquet- np.floor(x)*period
+        t_phased =  2*temps_paquet- np.floor(x)*period + period #we add a period to stay in the right place
         #computing fft and dephasing it 
         fft_signal = fft.fft(train)
         freq = fft.fftfreq(len(train), d=1/sample_rate)
