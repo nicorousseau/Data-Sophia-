@@ -33,7 +33,25 @@ def spectrogram(signal, samplerate = 22050, n_fft = 512, window = "haming", wind
 
 def specshow(spec) :
     pass
+def los_generation(taille_audio, taille_paquet, n_loss):
+    """Fonction générant les positions des gaps dans l'audio
 
+    Args:
+        taille_audio (int): nb de sample dans l'audio
+        taille_paquet (int): taille des gaps que l'on va créer
+        n_loss (int): nombre de trous à partir duquel on va générer
+
+    Returns:
+        np.array: position des gaps dans l'audio dont on a fourni la taille
+    """
+    pos_gap = np.random.randint(2*taille_paquet, taille_audio- taille_paquet, n_loss)
+    pos_gap = np.sort(pos_gap)
+    pos_loss_decale = pos_gap[:n_loss-1]
+    diff = pos_gap[1:n_loss]- pos_loss_decale
+    mask = diff > taille_paquet
+    pos_gap = pos_gap[1:n_loss][mask]
+    
+    return pos_gap
 def forecast(train, n_pred, lags = 128, n_thresh = 1, clip_value = 1.3, crossfade_size = None):
 
     model = statsmodels.tsa.ar_model.AutoReg(train, lags)
@@ -95,9 +113,10 @@ def audio_predictions(audio, pos_gap, taille_paquet, order = 128, adapt = False,
 def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
     audio_corr = audio.copy()
     temps_paquet = taille_paquet/sample_rate
+    taille_context = 1.5
     for pos in pos_gap :
-        if pos>1.5*taille_paquet :
-            taille_train = int(1.5*taille_paquet)
+        if pos>taille_context*taille_paquet :
+            taille_train = int(taille_context*taille_paquet)
         else : 
             taille_train = taille_paquet
         train = audio_corr[pos-taille_train: pos]
@@ -106,8 +125,8 @@ def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
         ind = _finding_local_max(autocor)
         period = np.abs(ind[0]- ind[1])/sample_rate
         #Fixing parameters needed
-        x = 2*temps_paquet / period
-        t_phased =  2*temps_paquet- np.floor(x)*period + period #we add a period to stay in the right place
+        x = taille_context*temps_paquet / period
+        t_phased =  taille_context*temps_paquet- np.floor(x)*period + period #we add a period to stay in the right place
         #computing fft and dephasing it 
         fft_signal = fft.fft(train)
         freq = fft.fftfreq(len(train), d=1/sample_rate)
@@ -118,14 +137,28 @@ def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
         audio_corr[pos:pos+taille_paquet] = pred
     return audio_corr
 
-def _finding_local_max(audio):
-    r = np.concatenate((audio[1:], [0]))
-    l = np.concatenate(([0],audio[:-1]))
-    mask_r = audio > r 
-    mask_l = audio > l 
-    mask = mask_r*mask_l
-    list_max = np.zeros(len(audio))
-    list_max[mask] = audio[mask]
+#def _finding_local_max(audio):
+#    r = np.concatenate((audio[1:], [0]))
+#    l = np.concatenate(([0],audio[:-1]))
+#    mask_r = audio > r 
+#    mask_l = audio > l 
+#    mask = mask_r*mask_l
+#    list_max = np.zeros(len(audio))
+#    list_max[mask] = audio[mask]
+#    ind = np.argsort(list_max)[::-1]
+#    return ind
+
+def _finding_local_max(array):
+    mask = [False]
+    n = len(array)
+    for i in range(1, n-1):
+        if (array[i-1] < array[i]) and (array[i+1] < array[i]) :
+            mask.append(True)
+        else : 
+            mask.append(False)
+    mask.append(False)
+    list_max = np.zeros(n)
+    list_max[mask] = array[mask].copy()
     ind = np.argsort(list_max)[::-1]
     return ind
 
