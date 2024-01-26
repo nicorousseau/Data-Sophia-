@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 
 import pickle 
 from statsmodels.tsa.ar_model import AutoReg
-from scipy.io import wavfile
 import scipy
+import scipy.io.wavfile as wav
 
 ### Définitions des constantes ###
 Resample_rate = 44100
@@ -14,20 +14,26 @@ context_size = int(context_length * Resample_rate)     #### Taille en nombre de 
 predict_size = int(predict_length * Resample_rate)     #### Taille en nombre de points de la fenêtre de prédiction
 
 
+
+#### Importation des données ####
+
 with open('time_series\data.pkl', 'rb') as fichier:
     data = pickle.load(fichier)
 
-song_1 = data[0][1]             #### On prend la première série temporelle
+song_1 = np.array(data[0][1][:len(data[0][1])//3])             #### On prend la première série temporelle
+#song_1 = song_1.astype(np.int16)
 sample_rate = data[0][0]        #### On récupère le sample rate
 
 if sample_rate != Resample_rate :
     song_1 = scipy.signal.resample(song_1, int(len(song_1)*Resample_rate/sample_rate))  #### On resample la série temporelle si le sample rate n'est pas celui désiré
 
-pos_loss_packets = np.random.randint(context_size, len(song_1) - predict_size, 3)  #### On choisit n positions de paquets perdus au hasard
+pos_loss_packets = np.random.randint(context_size, len(song_1) - predict_size, 50)  #### On choisit n positions de paquets perdus au hasard
 pos_loss_packets = np.sort(pos_loss_packets)
 mask = pos_loss_packets[1:]>(pos_loss_packets[:-1]+context_size)
 mask = [True]+mask.tolist()
 pos_loss_packets = pos_loss_packets[mask]  #### On enlève les positions trop proches
+
+
 
 #### On remplace les paquets perdus avec diverses méthodes ####
 
@@ -73,11 +79,13 @@ def AR(song, pos_loss_packets, predict_size, context_size, lags, crossfade = Fal
 
     for pos in pos_loss_packets :
         context = song[pos - context_size: pos]
+        context = context.astype(np.int16)
         # train autoregression
+
         model = AutoReg(context, lags)
         model_fit = model.fit()
         # make predictions
-        predictions = model_fit.predict(start=context_size, end=context_size + predict_size + crossfade_size - 1, dynamic=False)
+        predictions = model_fit.predict(start=context_size, end=context_size + predict_size + crossfade_size - 1)
 
         if adaptatif :
             if context_variable :
@@ -97,7 +105,7 @@ def AR(song, pos_loss_packets, predict_size, context_size, lags, crossfade = Fal
 
         # complete song   
         if crossfade :
-            song_predicted[pos: pos + predict_size] = predictions
+            song_predicted[pos: pos + predict_size] = predictions[:predict_size]
             song_predicted[pos + predict_size: pos + predict_size + predict_size//10] = (crossfade_window * predictions[predict_size:] + (1-crossfade_window) * song[pos + predict_size: pos + predict_size + predict_size//10])
         else :     
             song_predicted[pos: pos + predict_size] = predictions
@@ -106,50 +114,37 @@ def AR(song, pos_loss_packets, predict_size, context_size, lags, crossfade = Fal
 
 #### Méthode persistance fréquentielle ####
 
-def freq_max_sorted(fft, n):
-
-    '''Renvoie les n plus grandes valeurs de fft, en mettant à 0 les autres valeurs'''
-
-    fft_copy = np.copy(fft)
-    fft_abs = np.abs(fft_copy)
-
-    mask = [False]
-    # Renvoie une liste de booléen de même taille que values, avec True si la valeur correspondante est un maximum local
-    for i in range (1, len(fft_copy)-1) : 
-        if (fft_abs[i] > fft_abs[i-1]) and (fft_abs[i] > fft_abs[i+1]) : 
-            mask.append(True)
-        else :
-            mask.append(False)
-    mask.append(False)
-
-    # On inverse la liste de booléen pour avoir True si la valeur correspondante n'est pas un maximum local
-    inversed_max_locaux = [not i for i in mask]
-
-    # On met à 0 les valeurs qui ne sont pas des maximums locaux
-    fft_copy[inversed_max_locaux] = 0
-    fft_abs[inversed_max_locaux] = 0
-    
-    # On trie les valeurs
-    indexes_sorted = np.argsort(fft_abs, kind = 'stable')[:len(fft_abs)-n]
-
-    # On met à 0 les valeurs qui ne sont pas parmi les n plus grandes
-    fft_copy[indexes_sorted] = 0
-
-    return fft_copy
-
 def apodisation(freq):
     pass
 
 def finding_local_max(list):
-    r = np.concatenate((list[1:], [0]))
-    l = np.concatenate(([0],list[:-1]))
-    mask_r = list > r 
-    mask_l = list > l 
-    mask = mask_r*mask_l
+    r = list[1:]
+    l = list[:-1]
+    mask_l = r > l
+    mask_r = l > r
+    mask = mask_l[:-1] * mask_r[1:]
+    mask = np.concatenate((np.array([False]), mask, np.array([False])))
     list_max = np.zeros(len(list))
     list_max[mask] = list[mask]
     ind = np.argsort(list_max)[::-1]
     return ind
+
+def freq_max_sorted(fft, n):
+
+    fft_abs = np.abs(fft)
+    r = fft_abs[1:]
+    l = fft_abs[:-1]
+    mask_l = r > l
+    mask_r = l > r
+    mask = mask_l[:-1] * mask_r[1:]
+    mask = np.concatenate((np.array([True]), mask, np.array([False])))
+
+    list_max = np.zeros(len(fft_abs))
+    list_max[mask] = fft_abs[mask]
+    ind = np.argsort(list_max)[:-n]
+
+    fft[ind] = 0
+    return fft
 
 def persistance_freq(song, pos_loss_packets, predict_size, context_size, lags, crossfade = False):
 
@@ -197,15 +192,19 @@ def persistance_freq(song, pos_loss_packets, predict_size, context_size, lags, c
 
 #### Résultats ####
 
-#predictions_vide = vide(song_1, pos_loss_packets, predict_size)
-#predictions_persistance = persistance(song_1, pos_loss_packets, predict_size)
-#predictions_AR = AR(song_1, pos_loss_packets, predict_size, context_size, 300)
-#predictions_AR_crossfade = AR(song_1, pos_loss_packets, predict_size, context_size, 300, crossfade = True)
-#predictions_AR_adaptatif = AR(song_1, pos_loss_packets, predict_size, context_size, 300, adaptatif = True)
-#predictions_AR_adaptatif_crossfade = AR(song_1, pos_loss_packets, predict_size, context_size, 300, crossfade = True, adaptatif = True)
-#predictions_AR_adaptatif_crossfade_variable = AR(song_1, pos_loss_packets, predict_size, context_size, 300, crossfade = True, adaptatif = True, context_variable = True)
+predictions_vide = vide(song_1, pos_loss_packets, predict_size)
+predictions_persistance = persistance(song_1, pos_loss_packets, predict_size)
+predictions_AR = AR(song_1, pos_loss_packets , predict_size, context_size, lags = 300)
+predictions_AR_crossfade = AR(song_1, pos_loss_packets, predict_size, context_size, 300, crossfade = True)
+predictions_AR_adaptatif = AR(song_1, pos_loss_packets, predict_size, context_size, 300, adaptatif = True)
+predictions_AR_adaptatif_crossfade = AR(song_1, pos_loss_packets, predict_size, context_size, 300, crossfade = True, adaptatif = True)
+predictions_AR_adaptatif_crossfade_variable = AR(song_1, pos_loss_packets, predict_size, context_size, 300, crossfade = True, adaptatif = True, context_variable = True)
 predictions_persistance_freq = persistance_freq(song_1, pos_loss_packets, predict_size, int(context_size//(3/2)), 30)
 predictions_persistance_freq_crossfade = persistance_freq(song_1, pos_loss_packets, predict_size, int(context_size//(3/2)), 30, crossfade = True)
+
+# Save the predicted songs
+for i, predictions in enumerate([predictions_vide, predictions_persistance, predictions_AR, predictions_AR_crossfade, predictions_AR_adaptatif, predictions_AR_adaptatif_crossfade, predictions_AR_adaptatif_crossfade_variable, predictions_persistance_freq, predictions_persistance_freq_crossfade]):
+    wav.write(f"predictions/prediction_{i}.wav", sample_rate, predictions.astype(np.int16))
 
 RMSE_vide = []
 RMSE_persistance = []
@@ -238,7 +237,7 @@ def ame(predictions, targets):
     targets = np.array(targets)
     return np.mean(np.abs(predictions - targets))
 
-'''for pos in pos_loss_packets : 
+for pos in pos_loss_packets : 
     RMSE_vide.append(rmse(song_1[pos: pos + predict_size], predictions_vide[pos: pos + predict_size]))
     RMSE_persistance.append(rmse(song_1[pos: pos + predict_size], predictions_persistance[pos: pos + predict_size]))
     RMSE_AR.append(rmse(song_1[pos: pos + predict_size], predictions_AR[pos: pos + predict_size]))
@@ -284,14 +283,27 @@ ax[1].set_title('Boxplots of AME')
 ax[1].set_xlabel('Methods')
 ax[1].set_ylabel('AME')
 
+plt.ylim(0, 10e3)
 # Show the plot
 plt.show()
-'''
 
+
+#### Visualisation des résultats ####
+
+#### AR ####
 for pos in pos_loss_packets : 
-    fig, axs = plt.subplots(3)
-    axs[0].plot(song_1[pos-context_size//3:pos+predict_size+predict_size//5], color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
-    axs[1].plot(predictions_persistance_freq[pos-context_size//3:pos+predict_size+predict_size//5], color = 'red', label = 'persistance_freq', linestyle = '--', alpha = 0.5)
-    axs[2].plot(predictions_persistance_freq_crossfade[pos-context_size//3:pos+predict_size+predict_size//5], color = 'green', label = 'persistance_freq_crossfade', linestyle = '--', alpha = 0.5)
+    fig, axs = plt.subplots(2)
+    axs[0].plot(song_1[pos-context_size:pos+predict_size+predict_size//5], color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
+    plt.legend()
+    axs[1].plot(predictions_AR[pos-context_size:pos+predict_size+predict_size//5], color = 'red', label = 'AR', linestyle = '--', alpha = 0.5)
+    plt.legend()
+    plt.show()
+
+####persistance_freq####
+for pos in pos_loss_packets : 
+    fig, axs = plt.subplots(2)
+    axs[0].plot(song_1[pos-context_size:pos+predict_size+predict_size//5], color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
+    plt.legend()
+    axs[1].plot(predictions_persistance_freq[pos-context_size:pos+predict_size+predict_size//5], color = 'red', label = 'persistance_freq', linestyle = '--', alpha = 0.5)
     plt.legend()
     plt.show()
