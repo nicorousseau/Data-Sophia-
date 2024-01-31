@@ -7,6 +7,30 @@ import scipy.fft as fft
 import os
 import pathlib
 
+
+def load_data(directory, instr = 'saxphone', resample_rate = None):
+    audio_filespath =[]
+    audio_files_tuple = []
+    for root, dirs, files in os.walk(directory):
+        for filename in files:
+            #print(os.path.join(root, filename))
+            if filename[len(filename)-len(instr):len(filename)] == instr :
+                pathfile = os.path.join(root, filename)
+                audio_filespath.append(pathfile)
+                audio_files_tuple.append(wavfile.read(pathfile))
+    print(len(audio_files_tuple))
+    audio_files = []
+    list_audio = []
+    if resample_rate is not None : 
+        for i in range(len(audio_files_tuple)):
+            audio_files.append([audio_files_tuple[i][0], audio_files_tuple[i][1].astype(dtype = np.float64)])
+            list_audio.append(resample(audio_files[i][1], int(len(audio_files[i][1])*resample_rate/audio_files[i][0]), window= "hamming", domain = "time"))
+    else : 
+        for i in range(len(audio_files_tuple)):
+            audio_files.append([audio_files_tuple[i][0], audio_files_tuple[i][1].astype(dtype = np.float64)])
+            list_audio.append(audio_files[i][1])
+    return list_audio
+
 def spectrogram(signal, samplerate = 22050, n_fft = 512, window = "haming", windows_length = None, hop_length = None) : 
     if windows_length is None : 
         windows_length = n_fft
@@ -52,6 +76,21 @@ def los_generation(taille_audio, taille_paquet, n_loss):
     pos_gap = pos_gap[1:n_loss][mask]
     
     return pos_gap
+
+
+#fonction pour silence et persistance
+def filling_silence_persistance(audio, pos_gap, taille_paquet) :
+    audio_persistance = audio.copy()
+    audio_gap_filled = audio.copy()
+
+    for x in pos_gap : 
+        persistant = np.copy(audio[x-taille_paquet:x])
+
+        audio_persistance[x:x+taille_paquet] = persistant
+        audio_gap_filled[x:x+taille_paquet] = np.zeros(taille_paquet)
+        
+    return audio_gap_filled, audio_persistance
+
 def forecast(train, n_pred, lags = 128, n_thresh = 1, clip_value = 1.3, crossfade_size = None):
 
     model = statsmodels.tsa.ar_model.AutoReg(train, lags)
