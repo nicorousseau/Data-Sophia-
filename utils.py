@@ -187,19 +187,37 @@ def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
 #    ind = np.argsort(list_max)[::-1]
 #    return ind
 
-def _finding_local_max(array):
-    mask = [False]
-    n = len(array)
-    for i in range(1, n-1):
-        if (array[i-1] < array[i]) and (array[i+1] < array[i]) :
-            mask.append(True)
-        else : 
-            mask.append(False)
-    mask.append(False)
-    list_max = np.zeros(n)
-    list_max[mask] = array[mask].copy()
-    ind = np.argsort(list_max)[::-1]
-    return ind
+#def _finding_local_max(array):
+#    mask = [False]
+#    n = len(array)
+#    for i in range(1, n-1):
+#        if (array[i-1] < array[i]) and (array[i+1] < array[i]) :
+#            mask.append(True)
+#        else : 
+#            mask.append(False)
+#    mask.append(False)
+#    list_max = np.zeros(n)
+#    list_max[mask] = array[mask].copy()
+#    ind = np.argsort(list_max)[::-1]
+#    return ind
+
+def keeping_important_freq(array, nb_max):
+    abs_array = np.abs(array)
+    r = abs_array[1:]
+    l = abs_array[:-1]
+    mask_l = r > l
+    mask_r = l > r
+    mask = mask_l[:-1] * mask_r[1:]
+    mask = np.concatenate(([False], mask, [False]))
+    list_max = np.zeros(len(array))
+    list_max[mask] = abs_array[mask]
+    ind_kept = np.argsort(list_max)[::-1][:nb_max]
+    
+    max_kept = np.zeros(len(array), dtype = np.complex128)
+    max_kept[ind_kept] = array[ind_kept]
+
+    return ind_kept, max_kept
+
 
 
 def write_wav(audio, samplerate, name, new_samplerate = None,  directory = None) :
