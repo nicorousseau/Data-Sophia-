@@ -6,11 +6,8 @@ import sklearn.linear_model as lm
 
 class AR_freq():
 
-    def __init__(self, audio, old_sr, new_sr, nb_lags, nb_freq_kept, train_size, AR = True, Freq = True):
+    def __init__(self, audio, old_sr, new_sr, nb_lags, nb_freq_kept, train_size):
 
-        self.AR = AR
-        self.Freq = Freq
-        
         self.audio = audio
         self.sr = new_sr
 
@@ -57,21 +54,12 @@ class AR_freq():
         ind = np.argsort(list_max)[-self.nb_freq_kept:]
         self.freq_kept = freq[ind]
         
-    def initialise(self):
-        if self.AR == False : 
-            self.nb_lags = 0
-        if self.Freq == False :
-            self.freq_kept = np.array([])
-        
     def _train_test(self):
 
         time = np.linspace(0,(self.train_size)/self.sr,self.train_size)
         self.sample = self.audio[self.pos-self.nb_lags-self.train_size:self.pos]
 
-        if self.Freq == True :
-            self._freq_max_sorted()
-        else :
-            self.freq_kept = np.array([])
+        self._freq_max_sorted()
 
         input = []
         output = []
@@ -97,10 +85,7 @@ class AR_freq():
         self.pred = []
         self.sample_trunc = self.sample.tolist()
         for i in range (predict_size):
-            if self.AR == False : 
-                vect = np.cos(2*np.pi*self.freq_kept*time[i]).tolist() + np.sin(2*np.pi*self.freq_kept*time[i]).tolist()
-            else : 
-                vect = self.sample_trunc[-self.nb_lags:] + np.cos(2*np.pi*self.freq_kept*time[i]).tolist() + np.sin(2*np.pi*self.freq_kept*time[i]).tolist()
+            vect = self.sample_trunc[-self.nb_lags:] + np.cos(2*np.pi*self.freq_kept*time[i]).tolist() + np.sin(2*np.pi*self.freq_kept*time[i]).tolist()
             value = np.dot(self.coef, vect)
             self.sample_trunc.append(value)
             self.pred.append(value)
@@ -134,8 +119,7 @@ train_size = 960
 predict_size = 640
 
 positions = np.random.randint(2000, len(audio_data)-predict_size, 10)
-AR_hybrid = AR_freq(audio_data, sample_rate, new_sample_rate, nb_lags, nb_freq_kept, train_size, AR = True, Freq = True)
-AR_hybrid.initialise()
+AR_hybrid = AR_freq(audio_data, sample_rate, new_sample_rate, nb_lags, nb_freq_kept, train_size)
 
 for pos in positions :
     AR_hybrid.fit(pos=pos, alpha = 0.5, l1_ratio = 0.7)

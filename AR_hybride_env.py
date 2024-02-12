@@ -61,14 +61,17 @@ class AR_freq_env():
             label_freq.append([self.sample[i]])
         
         input_env = time[self.train_size-50:self.train_size].tolist()
-        label_env = self.env[self.pos-50:self.pos].tolist()
+        label_env_pos = self.env[1][self.pos-50:self.pos].tolist()
+        label_env_neg = self.env[0][self.pos-50:self.pos].tolist()
 
         input_freq = np.array(input_freq)
         label_freq = np.array(label_freq)
-        input_env = np.array(input_env).reshape(-1,1)
-        label_env = np.array(label_env).reshape(-1,1)
+        input_env_pos = np.array(input_env).reshape(-1,1)
+        label_env_pos = np.array(label_env_pos).reshape(-1,1)
+        input_env_neg = np.array(input_env).reshape(-1,1)
+        label_env_neg = np.array(label_env_neg).reshape(-1,1)
 
-        return input_freq, label_freq, input_env, label_env
+        return input_freq, label_freq, input_env_pos, label_env_pos, input_env_neg, label_env_neg
     
     def _env(self):
         window_size = 300
@@ -79,14 +82,21 @@ class AR_freq_env():
         
         env_min = [np.min(audio_pad[i-window_size//2:i+window_size//2]) for i in range(window_size//2, len(audio_pad)-window_size//2)]
         env_min = np.convolve(env_min, np.ones((window_size))/window_size, mode='same')
+        env_min = np.abs(env_min)
 
-        env = np.abs(env_min)
-        mask = env_max > env_min
-        env[mask] = env_max[mask]
-        self.env = env
+        self.env = [env_min, env_max]
+
 
     def _normalize(self):
-        self.sample = self.sample/self.env[self.pos-self.train_size: self.pos]
+        positive = self.sample > 0
+        negative = self.sample < 0
+
+        self.sample_copy = np.zeros(len(self.sample))
+
+        self.sample_copy[positive] = self.sample[positive]/np.array(self.env[1][self.pos-self.train_size: self.pos])[positive]
+        self.sample_copy[negative] = self.sample[negative]/np.array(self.env[0][self.pos-self.train_size: self.pos])[negative]
+        self.sample = np.copy(self.sample_copy)
+
 
     def fit(self, pos, alpha, l1_ratio):
         self.pos = pos
@@ -94,31 +104,48 @@ class AR_freq_env():
         self._normalize()
         self._freq_max_sorted()
 
-        input_freq, label_freq, input_env, label_env = self._train_test()
+        input_freq, label_freq, input_env_pos, label_env_pos, input_env_neg, label_env_neg = self._train_test()
 
         self.ElasticNet_freq = lm.ElasticNet(alpha=alpha, l1_ratio=l1_ratio)
         self.ElasticNet_freq.fit(input_freq, label_freq)
 
         self.coef_freq = self.ElasticNet_freq.coef_
 
-        self.ElasticNet_env = lm.ElasticNet(alpha=alpha, l1_ratio=l1_ratio)
-        self.ElasticNet_env.fit(input_env, label_env)
+        self.ElasticNet_env_pos = lm.ElasticNet(alpha=alpha, l1_ratio=l1_ratio)
+        self.ElasticNet_env_pos.fit(input_env_pos, label_env_pos)
 
-        self.coef_env = self.ElasticNet_env.coef_
+        self.coef_env_pos = self.ElasticNet_env_pos.coef_
+
+        self.ElasticNet_env_neg = lm.ElasticNet(alpha=alpha, l1_ratio=l1_ratio)
+        self.ElasticNet_env_neg.fit(input_env_neg, label_env_neg)
+
+        self.coef_env_neg = self.ElasticNet_env_pos.coef_
 
     def predict(self, predict_size):
         self.predict_size = predict_size
-        time = np.linspace((self.train_size-12)/self.sr,(self.train_size+predict_size-1-12)/self.sr,predict_size)
+        time = np.linspace((self.train_size-10)/self.sr,(self.train_size+predict_size-1-10)/self.sr,predict_size)
         self.pred = []
         self.sample = self.sample.tolist()
         for i in range (predict_size):
             freq_vect = np.cos(2*np.pi*self.freq_kept*time[i]).tolist() + np.sin(2*np.pi*self.freq_kept*time[i]).tolist()
             freq_value = np.dot(self.coef_freq, freq_vect)
-            self.sample.append(freq_value)
-        self.env_predict = self.env[self.pos-1] + (self.coef_env) * np.linspace(0, predict_size/self.sr, predict_size)
-        mask = self.env_predict < 0
-        self.env_predict[mask] = 0
-        self.pred = self.env_predict * np.array(self.sample[-predict_size:])
+            self.pred.append(freq_value)
+
+        self.pred = np.array(self.pred)
+
+        self.env_pos_predict = self.env[1][self.pos-1] + (self.coef_env_pos) * np.linspace(0, predict_size/self.sr, predict_size)
+        mask_pos = self.env_pos_predict < 0
+        self.env_pos_predict[mask_pos] = 0
+
+        self.env_neg_predict = self.env[0][self.pos-1] + (self.coef_env_neg) * np.linspace(0, predict_size/self.sr, predict_size)
+        mask_neg = self.env_neg_predict < 0
+        self.env_pos_predict[mask_neg] = 0
+
+        mask_pred_pos = np.array(self.pred) > 0
+        mask_pred_neg = np.array(self.pred) < 0
+
+        self.pred[mask_pred_pos] = self.env_pos_predict[mask_pred_pos] * np.array(self.pred[mask_pred_pos])
+        self.pred[mask_pred_neg] = self.env_neg_predict[mask_pred_neg] * np.array(self.pred[mask_pred_neg])
 
     def plot_pred(self):
         plt.plot(self.pred, label = 'pred')
@@ -133,7 +160,7 @@ class AR_freq_env():
         axs[1].plot(self.coef_freq)
         plt.show()
 
-'''sample_rate, audio_data = wav.read('songs/audio_original.wav')
+sample_rate, audio_data = wav.read('songs/audio_original.wav')
 
 new_sample_rate = 32000
 
@@ -147,17 +174,16 @@ predict_size = 640
 
 AR = AR_freq_env(audio_data, sample_rate, new_sample_rate, window_size, nb_freq_kept, train_size)
 
-positions = np.random.randint(train_size, len(audio_data)-predict_size, 10)
+positions = np.random.randint(train_size, len(audio_data)-predict_size, 2)
 
 for pos in positions : 
 
     AR.fit(pos=pos, alpha = 0, l1_ratio = 0.7)
     AR.predict(predict_size)
-    print(AR.coef_env)
 
-    plt.plot(AR.env[pos-train_size:pos+predict_size])
-    plt.plot(np.concatenate((AR.env[pos-train_size:pos],AR.env_predict)), linestyle = '--', color = 'r')
+    #plt.plot(AR.env[pos-train_size:pos+predict_size])
+    #plt.plot(np.concatenate((AR.env[1][pos-train_size:pos],AR.env_pos_predict)), linestyle = '--', color = 'r')
     plt.plot(np.concatenate((AR.audio[pos-train_size:pos],AR.pred)), label = 'pred', linestyle = '--', color = 'r')
     plt.plot(AR.audio[pos-train_size:pos+predict_size], label = 'true', color = 'g')
     plt.legend()
-    plt.show()'''
+    plt.show()
