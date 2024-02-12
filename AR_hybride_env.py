@@ -160,7 +160,7 @@ class AR_freq_env():
         axs[1].plot(self.coef_freq)
         plt.show()
 
-sample_rate, audio_data = wav.read('songs/audio_original.wav')
+'''sample_rate, audio_data = wav.read('songs/audio_original.wav')
 
 new_sample_rate = 32000
 
@@ -186,4 +186,4 @@ for pos in positions :
     plt.plot(np.concatenate((AR.audio[pos-train_size:pos],AR.pred)), label = 'pred', linestyle = '--', color = 'r')
     plt.plot(AR.audio[pos-train_size:pos+predict_size], label = 'true', color = 'g')
     plt.legend()
-    plt.show()
+    plt.show()'''
