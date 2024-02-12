@@ -8,6 +8,11 @@ import os
 import pathlib
 from numpy.matlib import repmat
 import scipy.interpolate
+from sklearn.linear_model import LinearRegression
+import time
+from statsmodels.tsa.stattools import adfuller
+
+
 
 def load_data(directory, taille_paquet, n_loss_per_audio = 100, instr = 'saxphone.wav', resample_rate = None, normalise = False):
     audio_filespath =[]
@@ -29,7 +34,7 @@ def load_data(directory, taille_paquet, n_loss_per_audio = 100, instr = 'saxphon
         if resample_rate is not None : 
             audio = resample(audio, int(len(audio)*resample_rate/audio_files_tuple[i][0]), window= "hamming", domain = "time")
         if normalise : 
-            max = np.iinfo(audio_files_tuple[i][1][0].dtype).max//2
+            max = np.iinfo(audio_files_tuple[i][1][0].dtype).max#//2
             audio = audio/max
         audio_files.append([audio_files_tuple[i][0], audio])
         list_audio.append(audio)
@@ -81,7 +86,7 @@ def los_generation(taille_audio, taille_paquet, n_loss):
     pos_gap = np.sort(pos_gap)
     pos_loss_decale = pos_gap[:n_loss-1]
     diff = pos_gap[1:n_loss]- pos_loss_decale
-    mask = diff > taille_paquet
+    mask = diff > 2*taille_paquet
     pos_gap = pos_gap[1:n_loss][mask]
     
     return pos_gap
@@ -113,6 +118,13 @@ def forecast(train_data, n_pred, lags = 128, n_thresh = 1, clip_value = 1.3, cro
     
     pred = model_fit.predict(start = n_train, end = end, dynamic = True)
     if (np.sum(np.abs(pred) > clip_value) > n_thresh) and (lags >= 32): 
+        #adf, pval, usedlag, nobs, crit_vals, icbest =  adfuller(train_data[-n_pred:])
+        #print('ADF test statistic:', adf)
+        #print('ADF p-values:', pval)
+        #print('ADF number of lags used:', usedlag)
+        #print('ADF number of observations:', nobs)
+        #print('ADF critical values:', crit_vals)
+        #print('ADF best information criterion:', icbest)
         new_pred = forecast(train_data, n_pred, lags//2, n_thresh = n_thresh, crossfade_size = crossfade_size)
         if np.sum(np.abs(pred) > clip_value) > np.sum(np.abs(new_pred) > clip_value) : 
             return new_pred
@@ -161,26 +173,6 @@ def audio_predictions(audio, pos_gap, taille_paquet, order = 128, train_size = N
     return AR_filled
 
 
-def env_forecast(train_data, n_pred, lags = 128, n_thresh = 1, clip_value = 1.3, crossfade_size = None):
-
-    model = statsmodels.tsa.ar_model.AutoReg(train_data, lags)
-    model_fit = model.fit()
-    n_train = len(train_data)
-    clip_value = clip_value*np.max(np.abs(train_data))#np.iinfo(format).max
-    if crossfade_size is None: 
-        end = n_train+n_pred-1
-    else : 
-        end = n_train+ n_pred*(1 + 1//int(1/crossfade_size)) -1
-    
-    pred = model_fit.predict(start = n_train, end = end, dynamic = True)
-    if ((np.sum(pred < 0) > n_thresh) or np.sum(np.abs(pred) > clip_value)) and (lags >= 32): 
-        new_pred = forecast(train_data, n_pred, lags//2, n_thresh = n_thresh, crossfade_size = crossfade_size)
-        if np.sum(np.abs(pred) > clip_value) > np.sum(np.abs(new_pred) > clip_value) and (np.sum(new_pred < 0) > np.sum(pred < 0)): 
-            return new_pred
-        else :
-            return pred
-    return pred 
-
 def _compute_env(audio, window_size = 200) : 
     window_size = 200
     sample_pad = np.pad(audio, (window_size//2, window_size//2), mode='edge')
@@ -206,37 +198,84 @@ def _compute_without_env_audio(audio, env_max, env_min) :
     audio_norm[audio <0] = audio_neg_norm[audio<0]
     return audio_norm
 
-def env_predictions(audio, pos_gap, taille_paquet, order = 128, train_size = None, adapt = False, clip_value = 1.3, crossfade_size = None, p_value = False):
-    env_max, env_min = _compute_env(audio)
-    audio_norm = _compute_without_env_audio(audio, env_max, env_min)
+def env_predictions(audio_norm, env_max, env_min, pos_gap, taille_paquet, order = 128, train_size = None, adapt = False, clip_value = 1.3, crossfade_size = None, ar_on_env = False):
+
     norm_to_fill = audio_norm.copy()
+    
     norm = audio_predictions(norm_to_fill, pos_gap, taille_paquet, order=order, train_size = train_size, adapt = adapt)
-    env_max_int = env_interpo(env_max, pos_gap, taille_paquet, train_size = train_size)
-    env_min_int = env_interpo(np.abs(env_min), pos_gap, taille_paquet, train_size = train_size)
+    if ar_on_env : 
+        env_max_int = env_ar(env_max, pos_gap, taille_paquet=taille_paquet, train_size = 2*taille_paquet, order = order)#env_interpo(env_max, pos_gap, taille_paquet, train_size = taille_paquet//4)
+        env_min_int = env_ar(np.abs(env_min), pos_gap, taille_paquet=taille_paquet, train_size=2*taille_paquet, order = order)#env_interpo(np.abs(env_min), pos_gap, taille_paquet, train_size = taille_paquet//4)
+    else : 
+        env_max_int = env_interpo(env_max, pos_gap, taille_paquet, train_size = taille_paquet//4)
+        env_min_int = env_interpo(np.abs(env_min), pos_gap, taille_paquet, train_size = taille_paquet//4)
+
+
     norm_pos_1 = norm.copy()
     norm_neg_1 = norm.copy()
     mask_pos = norm > 0
     mask_neg = norm < 0
     norm_pos_1[mask_neg] = 0
     norm_neg_1[mask_pos] = 0
+    audio_norm_pred = norm.copy()
+    audio_norm_pred[mask_neg] = norm_neg_1[mask_neg]
+    audio_norm_pred[mask_pos] = norm_pos_1[mask_pos]
     audio_pos = norm_pos_1 * env_max_int
     audio_neg = norm_neg_1 * env_min_int
     double_env_int = audio_pos.copy()
     double_env_int[mask_neg] = audio_neg[mask_neg]
-    return double_env_int
+    return double_env_int, env_max_int, env_min_int, audio_norm_pred
 
 def env_interpo(env, pos_gap, taille_paquet, train_size, order = 1):
     env_pred = env.copy()
     for x in pos_gap :
         train_data = np.copy(env_pred[x-train_size:x])
-        cs = scipy.interpolate.make_interp_spline(np.arange(x-train_size,x),train_data, k = order)#np.interp(np.arange(x, x+taille_paquet), np.arange(x-train_size,x), train_data)
-        pred = cs(np.arange(x ,x+taille_paquet))
+        coord = np.arange(x-train_size,x).reshape(-1,1)
+        reg = LinearRegression().fit(coord, train_data)
+        def f(cord): 
+            a = reg.coef_
+            b = train_data[-1] - a*(x-1)
+            return a*cord + b
+        fv = np.vectorize(f)
+        #print(f"coef : {reg.coef_}")
+        #cs = scipy.interpolate.make_interp_spline(np.arange(x-train_size,x), train_data, k = order)#np.interp(np.arange(x, x+taille_paquet), np.arange(x-train_size,x), train_data)
+        data = np.arange(x, x+taille_paquet)#.reshape(-1,1)
+        pred = fv(data)
         mask_neg = pred < 0
         pred[mask_neg] = 0
         env_pred[x:x+taille_paquet] = pred
     return env_pred
 
+def env_ar(env, pos_gap, taille_paquet, train_size, order = 256):
+    env_pred = env.copy()
+    for x in pos_gap : 
+        clip_value = np.max(env[:x])
+        train_data = np.copy(env_pred[x-train_size:x])
+        pred = env_forecast(train_data, n_pred = taille_paquet, lags = order, clip_value = clip_value, n_thresh = 1)
+        env_pred[x:x+taille_paquet] = pred
+    return env_pred
+        
+def env_forecast(train_data, n_pred, lags = 128, clip_value = None, n_thresh = 1,  crossfade_size = None):
 
+    model = statsmodels.tsa.ar_model.AutoReg(train_data, lags, trend = 'c')
+    model_fit = model.fit()
+    n_train = len(train_data)
+    #np.iinfo(format).max
+    if crossfade_size is None: 
+        end = n_train+n_pred-1
+    else : 
+        end = n_train+ n_pred*(1 + 1//int(1/crossfade_size)) -1
+    
+    pred = model_fit.predict(start = n_train, end = end, dynamic = True)
+    if ((np.sum(pred < 0) > n_thresh) or np.sum(np.abs(pred) > clip_value) > n_thresh) and (lags >= 32): 
+        #print(lags//2)
+        #print(n_train//2)
+        new_pred = env_forecast(train_data, n_pred, lags//2, clip_value = clip_value, n_thresh = n_thresh,  crossfade_size = crossfade_size)
+        if (np.sum(np.abs(pred) > clip_value) > np.sum(np.abs(new_pred) > clip_value)) and (np.sum(new_pred < 0) > np.sum(pred < 0)): 
+            pred = new_pred
+        pred[pred<0] = 0
+        pred[pred > clip_value] = clip_value
+    return pred 
 
 def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
     audio_corr = audio.copy()
@@ -253,7 +292,6 @@ def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
         ind = _finding_local_max(autocor)
         period = np.abs(ind[0]- ind[1])/sample_rate
         #Fixing parameters needed
-    #
         x = taille_context*temps_paquet / period
         t_phased =  taille_context*temps_paquet - np.floor(x)*period + period #we add a period to stay in the right place
         
@@ -359,5 +397,7 @@ def write_wav(audio, samplerate, name, new_samplerate = None,  directory = None)
             os.mkdir(directory)
         path = os.path.join(directory, path)
     path = os.path.join(current_path, path)
-    wavfile.write(path, samplerate, audio.astype(np.int16))
+    new_audio = audio * np.iinfo(np.int16).max
+    new_audio = audio.astype(np.int16)
+    wavfile.write(path, samplerate, new_audio)
 

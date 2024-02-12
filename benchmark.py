@@ -14,7 +14,6 @@ def nmse(y, y_predicted) :
 
 def nmse_mean(audio, audio_filled, pos_gap, taille_paquet):
     list_nmse = []
-    
     for k in range(len(pos_gap)) : 
         original = audio[pos_gap[k]: pos_gap[k]+taille_paquet]
         predicted = audio_filled[pos_gap[k]: pos_gap[k]+taille_paquet]
@@ -26,10 +25,10 @@ def nmse_mean(audio, audio_filled, pos_gap, taille_paquet):
 def mel_cs(y, y_predicted, sr) : 
     y = np.array(y)
     y_predicted = np.array(y_predicted)
-    y = y.astype(np.float64)
-    y = y/np.iinfo(np.int16).max
-    y_predicted =y_predicted.astype(np.float64)
-    y_predicted = y_predicted/np.iinfo(np.int16).max
+    #y = y.astype(np.float64)
+    #y = y/np.iinfo(np.int16).max
+    #y_predicted =y_predicted.astype(np.float64)
+    #y_predicted = y_predicted/np.iinfo(np.int16).max
     sample_rate = sr
     win_length = 512
     n_fft = 1024#int(np.floor(np.log2(len(y)))) = 9 dans notre cas#
@@ -46,7 +45,7 @@ def mel_cs(y, y_predicted, sr) :
     #fig.colorbar(img_2, ax=ax2, format="%+2.f dB")
     #plt.show()
 
-    return diff/np.linalg.norm(y_spec)
+    return diff/np.linalg.norm(y_spec, ord = 'fro')
     #https://librosa.org/doc/0.10.1/generated/librosa.filters.mel.html#librosa.filters.mel
     
 #ondelettes ? 
