@@ -10,7 +10,7 @@ from numpy.matlib import repmat
 import scipy.interpolate
 from sklearn.linear_model import LinearRegression
 import time
-from statsmodels.tsa.stattools import adfuller
+#from statsmodels.tsa.stattools import adfuller
 
 
 
