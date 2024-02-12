@@ -72,12 +72,12 @@ class AR_freq():
 
         return input, label 
 
-    def fit(self, pos, alpha, l1_ratio):
+    def fit(self, pos):
         self.pos = pos
         input, label = self._train_test()
-        self.ElasticNet = lm.ElasticNet(alpha=alpha, l1_ratio=l1_ratio)
+        self.ElasticNet = lm.LinearRegression()
         self.ElasticNet.fit(input, label)
-        self.coef = self.ElasticNet.coef_
+        self.coef = self.ElasticNet.coef_[0]
 
     def predict(self, predict_size):
         self.predict_size = predict_size
@@ -89,7 +89,7 @@ class AR_freq():
             value = np.dot(self.coef, vect)
             self.sample_trunc.append(value)
             self.pred.append(value)
-        if np.max(self.pred) > 1.5 * np.max(self.sample):
+        if np.max(np.abs(self.pred)) > 1.5 * np.max(np.abs(self.sample)):
             self.diverge = True 
         else :
             self.diverge = False
@@ -105,11 +105,11 @@ class AR_freq():
         plt.plot(self.coef)
         plt.show()
 
-'''sample_rate, audio_data = wav.read('songs/Chopin_1.wav')
+sample_rate, audio_data = wav.read('songs/audio_original.wav')
 
 new_sample_rate = 32000
 
-audio_data = np.mean(audio_data, axis=1)[:1000000]
+#audio_data = np.mean(audio_data, axis=1)[:1000000]
 
 nb_lags = 256
 
@@ -122,6 +122,6 @@ positions = np.random.randint(2000, len(audio_data)-predict_size, 10)
 AR_hybrid = AR_freq(audio_data, sample_rate, new_sample_rate, nb_lags, nb_freq_kept, train_size)
 
 for pos in positions :
-    AR_hybrid.fit(pos=pos, alpha = 0.5, l1_ratio = 0.7)
+    AR_hybrid.fit(pos=pos)
     AR_hybrid.predict(predict_size)
-    AR_hybrid.plot_pred()'''
+    AR_hybrid.plot_pred()
