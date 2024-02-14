@@ -37,12 +37,13 @@ class AR_freq():
         if len(self.audio.shape) == 2:
             self.audio = np.mean(self.audio, axis=1)
 
-        #self.audio = self.audio/np.max(np.abs(self.audio))
+        self.audio = self.audio/np.max(np.abs(self.audio))
 
     def _freq_max_sorted(self):
         sample = self.audio[self.pos-self.train_size:self.pos]
         sample = np.pad(sample * np.hamming(self.train_size), (2000, 2000), 'constant')
         fft_abs = np.abs(np.fft.fft(sample)[:len(sample)//2])
+        self.moy = 2 * fft_abs[0]/self.train_size
         freq = np.linspace(0,self.sr/2 - self.sr/len(fft_abs),len(fft_abs))
         r = fft_abs[1:]
         l = fft_abs[:-1]
@@ -68,8 +69,6 @@ class AR_freq():
         for i in range(self.train_size):
             input.append(self.sample[i:i+self.nb_lags].tolist() + np.cos(2*np.pi*self.freq_kept*time[i]).tolist() + np.sin(2*np.pi*self.freq_kept*time[i]).tolist())
             output.append([self.sample[i+self.nb_lags]])
-
-        print(len(input[0]))
         input = np.array(input)
         label = np.array(output)
 
@@ -79,6 +78,7 @@ class AR_freq():
         self.pos = pos
         input, label = self._train_test()
         self.ElasticNet = lm.LinearRegression()
+        #self.ElasticNet = lm.ElasticNet(alpha = 0.1, l1_ratio = 0)
         self.ElasticNet.fit(input, label)
         self.coef = self.ElasticNet.coef_[0]
 
@@ -95,6 +95,7 @@ class AR_freq():
             value = np.dot(self.coef, vect)
             self.sample_trunc.append(value)
             self.pred.append(value)
+        self.pred = np.array(self.pred) - self.moy
         if np.max(np.abs(self.pred)) > 1.5 * np.max(np.abs(self.sample)):
             self.diverge = True 
         else :
@@ -112,25 +113,29 @@ class AR_freq():
         axs[1].plot(self.coef[self.nb_lags:], label = 'freq')
         plt.show()
 
-sample_rate, audio_data = wav.read('songs/audio_original.wav')
+"""sample_rate, audio_data = wav.read('songs/audio_original.wav')
 
 new_sample_rate = 32000
 
 #audio_data = np.mean(audio_data, axis=1)[:1000000]
 
-nb_lags = 100
+nb_lags = 0
 
-nb_freq_kept = 16
+nb_freq_kept = 20
 
 train_size = 960
 predict_size = 640
 
-positions = np.random.randint(2000, len(audio_data)-predict_size, 5)
+positions = np.random.randint(2000, len(audio_data)-predict_size, 3)
 AR_hybrid = AR_freq(audio_data, sample_rate, new_sample_rate, nb_lags, nb_freq_kept, train_size)
 
 for pos in positions :
     AR_hybrid.fit(pos=pos)
     AR_hybrid.predict(predict_size)
+    AR_hybrid.plot_pred()
+    AR_hybrid.plot_coef()
+
     plt.plot(np.linspace(0, (train_size+predict_size-1)/new_sample_rate, train_size+predict_size),AR_hybrid.sample_trunc[nb_lags:], linestyle = '--')
     plt.plot(np.linspace(0, (train_size+predict_size-1)/new_sample_rate, train_size+predict_size),AR_hybrid.audio[pos-train_size:pos+predict_size])
     plt.show()
+"""
