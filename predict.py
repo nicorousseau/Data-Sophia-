@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import statsmodels
 from scipy.io import wavfile
 from scipy.signal import resample
-import scipy.fft as fft
+import numpy.fft as fft
 import os
 import pathlib
 from numpy.matlib import repmat
@@ -17,13 +17,21 @@ import time
 def load_data(directory, taille_paquet, n_loss_per_audio = 100, instr = 'saxphone.wav', resample_rate = None, normalise = False):
     audio_filespath =[]
     audio_files_tuple = []
-    for root, dirs, files in os.walk(directory):
-        for filename in files:
-            #print(filename[len(filename)-len(instr):len(filename)])
-            if filename[len(filename)-len(instr):len(filename)] == instr :
+    if instr == 'all' :
+        for root, dirs, files in os.walk(directory):
+            for filename in files:
+                #print(filename[len(filename)-len(instr):len(filename)])
                 pathfile = os.path.join(root, filename)
                 audio_filespath.append(pathfile)
                 audio_files_tuple.append(wavfile.read(pathfile))
+    else :
+        for root, dirs, files in os.walk(directory):
+            for filename in files:
+                #print(filename[len(filename)-len(instr):len(filename)])
+                if filename[len(filename)-len(instr):len(filename)] == instr :
+                    pathfile = os.path.join(root, filename)
+                    audio_filespath.append(pathfile)
+                    audio_files_tuple.append(wavfile.read(pathfile))
     audio_files = []
     list_audio = []
     list_pos_gap = []
@@ -166,10 +174,10 @@ def audio_predictions(audio, pos_gap, taille_paquet, order = 128, train_size = N
         
         if crossfade_size is not None : 
             n_cross = len(pred)-taille_paquet
-            window = np.linspace(0, 1, n_cross)**2
+            window = np.linspace(0, 1, n_cross)
             crossfaded = pred[taille_paquet:]*(1-window) + window*AR_filled[x+taille_paquet:x+taille_paquet+n_cross]
             AR_filled[x+taille_paquet:x+taille_paquet+n_cross] = crossfaded
-        AR_filled[x:x+taille_paquet] = pred
+        AR_filled[x:x+taille_paquet] = pred[:taille_paquet]
     return AR_filled
 
 
@@ -224,6 +232,8 @@ def env_predictions(audio_norm, env_max, env_min, pos_gap, taille_paquet, order 
     audio_neg = norm_neg_1 * env_min_int
     double_env_int = audio_pos.copy()
     double_env_int[mask_neg] = audio_neg[mask_neg]
+    
+    
     return double_env_int, env_max_int, env_min_int, audio_norm_pred
 
 def env_interpo(env, pos_gap, taille_paquet, train_size, order = 1):
@@ -300,6 +310,7 @@ def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
         fft_signal = fft.fft(train)
         freq = fft.fftfreq(len(train), d=1/sample_rate)
         dephasage = np.exp(1j*2*np.pi*t_phased*freq)
+        phase = np.angle(fft_signal)
         fft_signal = fft_signal * dephasage
         
         pred = np.real(fft.ifft(fft_signal))[:taille_paquet]
@@ -310,28 +321,48 @@ def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
         #wt = np.arange(0, taille_paquet) * 1/sample_rate
         #wN_ = taille_paquet * 2
         #wt_ = np.arange(0, wN_) * 1/sample_rate
-#
         #TFws = np.fft.fft(ws, taille_paquet)
         #f = np.linspace(-0.5, 0.5 - 1/taille_paquet, taille_paquet) * sample_rate
         #TFws_p = TFws[:taille_paquet//2]
         #f_p = f[np.arange(taille_paquet//2 + 1, taille_paquet )]
-#
         #aTFws_p = np.abs(TFws_p)
-#
         #Lf = 150
-#
         #idx_maxloc = np.where(aTFws_p > np.maximum(np.roll(aTFws_p, 1), np.roll(aTFws_p, -1)))[0]
-#
         #sort_maxloc = np.sort(aTFws_p[idx_maxloc])[::-1]
         #idx_sort_maxloc = np.argsort(aTFws_p[idx_maxloc])[::-1]
         #sel_f_p = f_p[idx_maxloc[idx_sort_maxloc[:Lf]]]
         #sel_TFws_p = TFws_p[idx_maxloc[idx_sort_maxloc[:Lf]]]
-        #temp = np.exp(2j * np.pi * np.outer(sel_f_p, wt_ ))
-        #ws_rec_ = 2 * np.real(np.sum(repmat(sel_TFws_p, wN_, 1).T * temp, axis=0)) / taille_paquet
-        #audio_corr[pos:pos+taille_paquet] = ws_rec_[:taille_train]
+        #
+        #temp = np.exp(2j * np.pi * np.outer(sel_f_p, wt_ )+ np.outer(np.angle(sel_TFws_p), np.ones(len(wt_))))
+        #ws_rec_ = 2 * np.real(np.sum(repmat(np.abs(sel_TFws_p), wN_, 1).T * temp, axis=0)) / taille_paquet
+        #fig, axs = plt.subplots(2)
+        #axs[0].plot(audio_corr[pos-taille_paquet:pos+taille_paquet], 'b')
+        #axs[1].plot(ws_rec_, 'r--')
+        #plt.show()
+        #
+    return audio_corr
 
-    return audio_corr#return audio_corr
 
+def freq_persistance2(audio, pos_gap, taille_paquet, sample_rate, n_harm):
+    audio_corr = audio.copy()
+    temps_paquet = taille_paquet/sample_rate
+    taille_context = 2#.5
+    taille_train = 2*taille_paquet
+    time = np.linspace(taille_train//2, (taille_train+taille_paquet-1)/sample_rate, taille_train//2+taille_paquet)
+    for pos in pos_gap :
+        train = audio_corr[pos-taille_train: pos].copy()
+        train = np.pad(train*np.hanning(taille_train), (10000,10000), 'constant')
+        #computing fft and dephasing it 
+        fft_signal = fft.fft(train)
+        freq = fft.fftfreq(len(fft_signal), d=1/sample_rate)[:len(fft_signal)//2]
+        fft_signal = fft_signal[:len(fft_signal)//2]
+        fft_abs = np.abs(fft_signal)
+        phase = np.angle(fft_signal)
+        ind_kept, abs_kept = keeping_important_freq(fft_abs, nb_max = n_harm)
+        
+        pred = [2*np.sum(np.real(fft_abs[ind_kept]/(taille_train)*np.exp(1j*2*np.pi*freq[ind_kept]*time[i] + phase[ind_kept]))) for i in range(len(time))]
+        audio_corr[pos:pos+taille_paquet] = pred[taille_train//2:]
+    return audio_corr
 
 #def _finding_local_max(audio):
 #    r = np.concatenate((audio[1:], [0]))
@@ -377,7 +408,7 @@ def keeping_important_freq(array, nb_max):
 
 
 
-def write_wav(audio, samplerate, name, new_samplerate = None,  directory = None) :
+def write_wav(audio, samplerate, name, new_samplerate = None,  directory = None, return_type = True) :
     """fonction convertissant les audios dans le bon format avant de les enregistrer en .wav
 
     Args:
@@ -398,6 +429,8 @@ def write_wav(audio, samplerate, name, new_samplerate = None,  directory = None)
         path = os.path.join(directory, path)
     path = os.path.join(current_path, path)
     new_audio = audio * np.iinfo(np.int16).max
-    new_audio = audio.astype(np.int16)
+    new_audio = new_audio.astype(np.int16)
+    #if not return_type : 
+    #    new_audio = new_audio.astype(np.float32)
     wavfile.write(path, samplerate, new_audio)
 
