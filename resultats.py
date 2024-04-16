@@ -5,35 +5,44 @@ import pickle
 from statsmodels.tsa.ar_model import AutoReg
 import scipy
 import scipy.io.wavfile as wav
+from AR_hybride import AR_freq
+from persistance_freq_env import AR_freq_env
 
 ### Définitions des constantes ###
-Resample_rate = 44100
-context_length = 0.03      #### Durée en seconde de la fenêtre de contexte
-predict_length = 0.01       #### Durée en seconde de la fenêtre de prédiction
+Resample_rate = 32000
+context_length = 0.04      #### Durée en seconde de la fenêtre de contexte
+predict_length = 0.02       #### Durée en seconde de la fenêtre de prédiction
 context_size = int(context_length * Resample_rate)     #### Taille en nombre de points de la fenêtre de contexte
 predict_size = int(predict_length * Resample_rate)     #### Taille en nombre de points de la fenêtre de prédiction
-
-
 
 #### Importation des données ####
 
 with open('time_series\data.pkl', 'rb') as fichier:
     data = pickle.load(fichier)
 
-song_1 = np.array(data[0][1][:len(data[0][1])//3])             #### On prend la première série temporelle
-#song_1 = song_1.astype(np.int16)
-sample_rate = data[0][0]        #### On récupère le sample rate
+sample_rate = data[2][0]                #### On récupère le sample rate
+song_1 = np.array(data[2][1])             #### On prend la première série temporelle
+
+print('Le sample rate est : ', sample_rate)
 
 if sample_rate != Resample_rate :
     song_1 = scipy.signal.resample(song_1, int(len(song_1)*Resample_rate/sample_rate))  #### On resample la série temporelle si le sample rate n'est pas celui désiré
 
-pos_loss_packets = np.random.randint(context_size, len(song_1) - predict_size, 50)  #### On choisit n positions de paquets perdus au hasard
+song_1 = np.mean(song_1, axis=1)
+
+pos_loss_packets = np.random.randint(2000, len(song_1) - 2 * predict_size, 1000)  #### On choisit n positions de paquets perdus au hasard
 pos_loss_packets = np.sort(pos_loss_packets)
-mask = pos_loss_packets[1:]>(pos_loss_packets[:-1]+context_size)
+mask = pos_loss_packets[1:]>(pos_loss_packets[:-1]+context_size*2)
 mask = [True]+mask.tolist()
 pos_loss_packets = pos_loss_packets[mask]  #### On enlève les positions trop proches
+print('Il y a ', len(pos_loss_packets), 'paquets perdus')
 
+#### Fonction pour le crossfade ####
 
+def f(x):
+    return 1/(1+np.exp(3*x))
+
+f = np.vectorize(f)
 
 #### On remplace les paquets perdus avec diverses méthodes ####
 
@@ -65,8 +74,8 @@ def AR(song, pos_loss_packets, predict_size, context_size, lags, crossfade = Fal
 
     if crossfade :
         print('Avec un crossfade')
-        crossfade_window = np.sqrt(np.linspace(1,0,predict_size//10))
-        crossfade_size = predict_size // 10
+        crossfade_size = predict_size // 20
+        crossfade_window = f(np.linspace(-1/2,1/2,crossfade_size))
     else : 
         crossfade_size = 0
 
@@ -103,19 +112,21 @@ def AR(song, pos_loss_packets, predict_size, context_size, lags, crossfade = Fal
                     predictions = model_fit.predict(start=context_size, end=context_size + predict_size + crossfade_size - 1, dynamic=False) 
         nb_lags = lags
 
+        if np.max(predictions) > 32767 : 
+            predictions = 32767 * np.ones(len(predictions))
+        elif np.min(predictions) < -32767 :
+            predictions  = -32767 * np.ones(len(predictions))
+
         # complete song   
         if crossfade :
             song_predicted[pos: pos + predict_size] = predictions[:predict_size]
-            song_predicted[pos + predict_size: pos + predict_size + predict_size//10] = (crossfade_window * predictions[predict_size:] + (1-crossfade_window) * song[pos + predict_size: pos + predict_size + predict_size//10])
+            song_predicted[pos + predict_size: pos + predict_size + crossfade_size] = (crossfade_window * predictions[predict_size:] + (1-crossfade_window) * song[pos + predict_size: pos + predict_size + crossfade_size])
         else :     
             song_predicted[pos: pos + predict_size] = predictions
 
     return song_predicted
 
 #### Méthode persistance fréquentielle ####
-
-def apodisation(freq):
-    pass
 
 def finding_local_max(list):
     r = list[1:]
@@ -155,8 +166,8 @@ def persistance_freq(song, pos_loss_packets, predict_size, context_size, lags, c
 
     if crossfade : 
         print('Avec un crossfade')
-        crossfade_window = np.sqrt(np.linspace(1,0,predict_size//10))  #### Fenêtre de crossfade
-        crossfade_size = predict_size // 10
+        crossfade_size = predict_size // 20
+        crossfade_window = f(np.linspace(-1/2,1/2,crossfade_size))
     else :
         crossfade_size = 0
 
@@ -190,23 +201,127 @@ def persistance_freq(song, pos_loss_packets, predict_size, context_size, lags, c
             
     return song_predicted
 
-#### Résultats ####
+def AR_hybrid(song, pos_loss_packets, predict_size, context_size, lags, crossfade = False):
+    
+    print('On effectue la méthode AR_hybride')
 
-predictions_vide = vide(song_1, pos_loss_packets, predict_size)
-predictions_persistance = persistance(song_1, pos_loss_packets, predict_size)
-predictions_AR = AR(song_1, pos_loss_packets , predict_size, context_size, lags = 300)
-predictions_AR_crossfade = AR(song_1, pos_loss_packets, predict_size, context_size, 300, crossfade = True)
-predictions_AR_adaptatif = AR(song_1, pos_loss_packets, predict_size, context_size, 300, adaptatif = True)
-predictions_AR_adaptatif_crossfade = AR(song_1, pos_loss_packets, predict_size, context_size, 300, crossfade = True, adaptatif = True)
-predictions_AR_adaptatif_crossfade_variable = AR(song_1, pos_loss_packets, predict_size, context_size, 300, crossfade = True, adaptatif = True, context_variable = True)
-predictions_persistance_freq = persistance_freq(song_1, pos_loss_packets, predict_size, int(context_size//(3/2)), 30)
-predictions_persistance_freq_crossfade = persistance_freq(song_1, pos_loss_packets, predict_size, int(context_size//(3/2)), 30, crossfade = True)
+    song_predicted = song.copy()
+
+    if crossfade :
+        print('Avec un crossfade')
+        crossfade_size = predict_size // 10
+        crossfade_window = f(np.linspace(-1/2,1/2,crossfade_size))
+    else : 
+        crossfade_size = 0
+
+    AR = AR_freq(song, sample_rate, sample_rate, nb_lags = lags, nb_freq_kept = 20, train_size = context_size)
+    n=0
+    for pos in pos_loss_packets :
+        AR.fit(pos)
+        AR.predict(predict_size+crossfade_size)
+        predictions = AR.pred
+
+        if AR.diverge == False :
+            n+=1
+            # complete song   
+            if crossfade :
+                song_predicted[pos: pos + predict_size] = predictions[:predict_size]
+                song_predicted[pos + predict_size: pos + predict_size + crossfade_size] = (crossfade_window * predictions[predict_size:] + (1-crossfade_window) * song[pos + predict_size: pos + predict_size + crossfade_size])
+            else :     
+                song_predicted[pos: pos + predict_size] = predictions[:predict_size]
+        else : 
+            # complete song
+            pos_loss_packets = np.delete(pos_loss_packets, np.where(pos_loss_packets == pos))
+            song_predicted[pos: pos + predict_size] = song[pos: pos + predict_size]
+
+    print(f"Il y a {n/len(pos_loss_packets)*100} % de paquets qui n'ont pas divergé")
+    return song_predicted
+
+#### Méthode fréquentielle ####
+
+def Persistance_freq(song, pos_loss_packets, predict_size, context_size, lags, crossfade = False):
+    
+    print('On effectue la méthode AR_hybride')
+
+    song_predicted = song.copy()
+
+    if crossfade :
+        print('Avec un crossfade')
+        crossfade_size = predict_size // 10
+        crossfade_window = f(np.linspace(-1/2,1/2,crossfade_size))
+    else : 
+        crossfade_size = 0
+
+    AR = AR_freq(song, sample_rate, sample_rate, nb_lags = lags, nb_freq_kept = 20, train_size = context_size)
+    for pos in pos_loss_packets :
+        AR.fit(pos-crossfade_size)
+        AR.predict(predict_size+2*crossfade_size)
+        predictions = AR.pred
+  
+        if crossfade :
+            song_predicted[pos-crossfade_size: pos] = (crossfade_window * song[pos-crossfade_size:pos] + (1-crossfade_window) * predictions[:crossfade_size])
+            song_predicted[pos: pos + predict_size] = predictions[crossfade_size:predict_size+crossfade_size]
+            song_predicted[pos + predict_size: pos + predict_size + crossfade_size] = (crossfade_window * predictions[predict_size+crossfade_size:] + (1-crossfade_window) * song[pos + predict_size: pos + predict_size + crossfade_size])
+        else :     
+            song_predicted[pos: pos + predict_size] = predictions[crossfade_size:predict_size]
+    return song_predicted
+
+#### Méthode fréquentielle avec enveloppe ####
+
+def AR_hybrid_env(song, pos_loss_packets, predict_size, train_size, crossfade = False):
+    
+    print('On effectue la méthode AR_hybride_env')
+
+    song_predicted = song.copy()
+
+    if crossfade :
+        print('Avec un crossfade')
+        crossfade_size = predict_size // 20
+        crossfade_window = f(np.linspace(-1/2,1/2,crossfade_size))
+    else : 
+        crossfade_size = 0
+
+    AR = AR_freq_env(song, sample_rate, sample_rate, nb_freq_kept = 50, train_size = train_size)
+    
+    for pos in pos_loss_packets :
+        AR.fit(pos)
+        AR.predict(predict_size+crossfade_size)
+        predictions = AR.pred
+        # complete song   
+        if crossfade :
+            song_predicted[pos: pos + crossfade_size] = (crossfade_window * song[pos:pos+crossfade_size] + (1-crossfade_window) * predictions[:crossfade_size])
+            song_predicted[pos + crossfade_size: pos + predict_size] = predictions[crossfade_size:predict_size]
+            song_predicted[pos + predict_size: pos + predict_size + crossfade_size] = (crossfade_window * predictions[predict_size:] + (1-crossfade_window) * song[pos + predict_size: pos + predict_size + crossfade_size])
+        else :     
+            song_predicted[pos: pos + predict_size] = predictions[:predict_size]
+
+    return song_predicted
+
+#### Résultats ####
+predictions_AR_128 = AR(song_1, pos_loss_packets, predict_size, context_size, lags = 128, crossfade=True)
+predictions_AR_256 = AR(song_1, pos_loss_packets, predict_size, context_size, lags = 256, crossfade=True)
+#predictions_AR_hybride = AR_hybrid(song_1, pos_loss_packets, predict_size, context_size, lags = 256)
+#predictions_AR_hybride_crossfade = AR_hybrid(song_1, pos_loss_packets, predict_size, context_size, lags = 256, crossfade = True)
+#predictions_vide = vide(song_1, pos_loss_packets, predict_size)
+#predictions_persistance = persistance(song_1, pos_loss_packets, predict_size)
+#predictions_AR = AR(song_1, pos_loss_packets , predict_size, context_size, lags = 256)
+#predictions_AR_crossfade = AR(song_1, pos_loss_packets, predict_size, context_size, 256, crossfade = True)
+#predictions_AR_adaptatif = AR(song_1, pos_loss_packets, predict_size, context_size, 256, adaptatif = True)
+#predictions_AR_adaptatif_crossfade = AR(song_1, pos_loss_packets, predict_size, context_size, 256, crossfade = True, adaptatif = True)
+#predictions_AR_adaptatif_crossfade_variable = AR(song_1, pos_loss_packets, predict_size, context_size, 256, crossfade = True, adaptatif = True, context_variable = True)
+#predictions_persistance_freq = Persistance_freq(song_1, pos_loss_packets, predict_size, context_size, lags = 0)
+#predictions_persistance_freq_crossfade = Persistance_freq(song_1, pos_loss_packets, predict_size, context_size, lags = 0, crossfade = True)
+#predictions_AR_hybride_env = AR_hybrid_env(song_1, pos_loss_packets, predict_size, context_size)
+#predictions_AR_hybride_env_crossfade = AR_hybrid_env(song_1, pos_loss_packets, predict_size, context_size, crossfade = True)
 
 # Save the predicted songs
-for i, predictions in enumerate([predictions_vide, predictions_persistance, predictions_AR, predictions_AR_crossfade, predictions_AR_adaptatif, predictions_AR_adaptatif_crossfade, predictions_AR_adaptatif_crossfade_variable, predictions_persistance_freq, predictions_persistance_freq_crossfade]):
-    wav.write(f"predictions/prediction_{i}.wav", sample_rate, predictions.astype(np.int16))
+names = ['predictions_vide', 'predictions_persistance', 'predictions_AR', 'predictions_AR_crossfade', 'predictions_AR_adaptatif', 'predictions_AR_adaptatif_crossfade', 'predictions_AR_adaptatif_crossfade_variable', 'predictions_persistance_freq', 'predictions_persistance_freq_crossfade', 'predictions_AR_hybride', 'predictions_AR_hybride_crossfade', 'predictions_AR_hybride_env', 'predictions_AR_hybride_env_crossfade']
+for i, predictions_name in enumerate(['predictions_AR_128', 'predictions_AR_256']):
+    wav.write(f"predictions/{predictions_name}.wav", Resample_rate, globals()[predictions_name].astype(np.int16))
 
-RMSE_vide = []
+wav.write(f"predictions/original.wav", Resample_rate, song_1.astype(np.int16))
+
+'''RMSE_vide = []
 RMSE_persistance = []
 RMSE_AR = []
 RMSE_AR_crossfade = []
@@ -215,6 +330,10 @@ RMSE_AR_adaptatif_crossfade = []
 RMSE_AR_adaptatif_crossfade_variable = []
 RMSE_persistance_freq = []
 RMSE_persistance_freq_crossfade = []
+RMSE_AR_hybride = []
+RMSE_AR_hybride_crossfade = []
+RMSE_AR_hybride_env = []
+RMSE_AR_hybride_env_crossfade = []
 
 AME_vide = []
 AME_persistance = []
@@ -225,7 +344,10 @@ AME_AR_adaptatif_crossfade = []
 AME_AR_adaptatif_crossfade_variable = []
 AME_persistance_freq = []
 AME_persistance_freq_crossfade = []
-
+AME_AR_hybride = []
+AME_AR_hybride_crossfade = []   
+AME_AR_hybride_env = []
+AME_AR_hybride_env_crossfade = []
 
 def rmse(predictions, targets):
     predictions = np.array(predictions)
@@ -247,6 +369,11 @@ for pos in pos_loss_packets :
     RMSE_AR_adaptatif_crossfade_variable.append(rmse(song_1[pos: pos + predict_size], predictions_AR_adaptatif_crossfade_variable[pos: pos + predict_size]))
     RMSE_persistance_freq.append(rmse(song_1[pos: pos + predict_size], predictions_persistance_freq[pos: pos + predict_size]))
     RMSE_persistance_freq_crossfade.append(rmse(song_1[pos: pos + predict_size], predictions_persistance_freq_crossfade[pos: pos + predict_size]))
+    RMSE_AR_hybride.append(rmse(song_1[pos: pos + predict_size], predictions_AR_hybride[pos: pos + predict_size]))
+    RMSE_AR_hybride_crossfade.append(rmse(song_1[pos: pos + predict_size], predictions_AR_hybride_crossfade[pos: pos + predict_size]))    
+    RMSE_AR_hybride_env.append(rmse(song_1[pos: pos + predict_size], predictions_AR_hybride_env[pos: pos + predict_size]))
+    RMSE_AR_hybride_env_crossfade.append(rmse(song_1[pos: pos + predict_size], predictions_AR_hybride_env_crossfade[pos: pos + predict_size]))
+
 
     AME_vide.append(ame(song_1[pos: pos + predict_size], predictions_vide[pos: pos + predict_size]))
     AME_persistance.append(ame(song_1[pos: pos + predict_size], predictions_persistance[pos: pos + predict_size]))
@@ -257,10 +384,14 @@ for pos in pos_loss_packets :
     AME_AR_adaptatif_crossfade_variable.append(ame(song_1[pos: pos + predict_size], predictions_AR_adaptatif_crossfade_variable[pos: pos + predict_size]))
     AME_persistance_freq.append(ame(song_1[pos: pos + predict_size], predictions_persistance_freq[pos: pos + predict_size]))
     AME_persistance_freq_crossfade.append(ame(song_1[pos: pos + predict_size], predictions_persistance_freq_crossfade[pos: pos + predict_size]))
+    AME_AR_hybride.append(ame(song_1[pos: pos + predict_size], predictions_AR_hybride[pos: pos + predict_size]))
+    AME_AR_hybride_crossfade.append(ame(song_1[pos: pos + predict_size], predictions_AR_hybride_crossfade[pos: pos + predict_size]))
+    AME_AR_hybride_env.append(ame(song_1[pos: pos + predict_size], predictions_AR_hybride_env[pos: pos + predict_size]))
+    AME_AR_hybride_env_crossfade.append(ame(song_1[pos: pos + predict_size], predictions_AR_hybride_env_crossfade[pos: pos + predict_size]))
 
 # Create a list of all the RMSE lists
-rmse_lists = [RMSE_vide, RMSE_persistance, RMSE_AR, RMSE_AR_crossfade, RMSE_AR_adaptatif, RMSE_AR_adaptatif_crossfade, RMSE_AR_adaptatif_crossfade_variable, RMSE_persistance_freq, RMSE_persistance_freq_crossfade]
-ame_lists = [AME_vide, AME_persistance, AME_AR, AME_AR_crossfade, AME_AR_adaptatif, AME_AR_adaptatif_crossfade, AME_AR_adaptatif_crossfade_variable, AME_persistance_freq, AME_persistance_freq_crossfade]
+rmse_lists = [RMSE_vide, RMSE_persistance, RMSE_AR, RMSE_AR_crossfade, RMSE_AR_adaptatif, RMSE_AR_adaptatif_crossfade, RMSE_AR_adaptatif_crossfade_variable, RMSE_persistance_freq, RMSE_persistance_freq_crossfade, RMSE_AR_hybride, RMSE_AR_hybride_crossfade, RMSE_AR_hybride_env, RMSE_AR_hybride_env_crossfade]
+ame_lists = [AME_vide, AME_persistance, AME_AR, AME_AR_crossfade, AME_AR_adaptatif, AME_AR_adaptatif_crossfade, AME_AR_adaptatif_crossfade_variable, AME_persistance_freq, AME_persistance_freq_crossfade, AME_AR_hybride, AME_AR_hybride_crossfade, AME_AR_hybride_env, AME_AR_hybride_env_crossfade]
 
 # Create a figure and axis
 fig, ax = plt.subplots(2)
@@ -270,7 +401,7 @@ ax[0].boxplot(rmse_lists)
 ax[1].boxplot(ame_lists)
 
 # Set the labels for the x-axis
-labels = ['Vide', 'Persistance', 'AR', 'AR Crossfade', 'AR Adaptatif', 'AR Adaptatif Crossfade', 'AR Adaptatif Crossfade Variable', 'Persistance Freq', 'Persistance Freq Crossfade']
+labels = ['Vide', 'Persistance', 'AR', 'AR Crossfade', 'AR Adaptatif', 'AR Adaptatif Crossfade', 'AR Adaptatif Crossfade Variable', 'Persistance Freq', 'Persistance Freq Crossfade', 'AR Hybride', 'AR Hybride Crossfade', 'AR Hybride Env', 'AR Hybride Env Crossfade']
 ax[0].set_xticklabels(labels, rotation=45)
 ax[1].set_xticklabels(labels, rotation=45)
 
@@ -283,27 +414,41 @@ ax[1].set_title('Boxplots of AME')
 ax[1].set_xlabel('Methods')
 ax[1].set_ylabel('AME')
 
-plt.ylim(0, 10e3)
+plt.ylim(0, 5*10e2)
 # Show the plot
 plt.show()
 
-
 #### Visualisation des résultats ####
 
-#### AR ####
-for pos in pos_loss_packets : 
-    fig, axs = plt.subplots(2)
-    axs[0].plot(song_1[pos-context_size:pos+predict_size+predict_size//5], color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
-    plt.legend()
-    axs[1].plot(predictions_AR[pos-context_size:pos+predict_size+predict_size//5], color = 'red', label = 'AR', linestyle = '--', alpha = 0.5)
-    plt.legend()
-    plt.show()
+time = np.linspace(0, 1.2*predict_size/Resample_rate, int(1.2*predict_size))
 
-####persistance_freq####
+#### AR_hybride_env ####
 for pos in pos_loss_packets : 
-    fig, axs = plt.subplots(2)
-    axs[0].plot(song_1[pos-context_size:pos+predict_size+predict_size//5], color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
-    plt.legend()
-    axs[1].plot(predictions_persistance_freq[pos-context_size:pos+predict_size+predict_size//5], color = 'red', label = 'persistance_freq', linestyle = '--', alpha = 0.5)
-    plt.legend()
-    plt.show()
+    _, axs = plt.subplots(3)
+
+    axs[0].plot(time,song_1[pos:pos+predict_size+predict_size//5], color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
+    axs[0].legend()
+    axs[0].plot(time, predictions_AR_adaptatif[pos:pos+predict_size+predict_size//5], color = 'red', label = 'AR_adaptatif', linestyle = '--', alpha = 0.5)
+    axs[0].legend()
+    axs[0].set_xlabel('Time (s)')
+    axs[0].set_ylabel('Amplitude')
+    axs[0].set_title('AR_adaptatif')
+
+    axs[1].plot(time,song_1[pos:pos+predict_size+predict_size//5], color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
+    axs[1].legend()
+    axs[1].plot(time,predictions_AR_hybride_crossfade[pos:pos+predict_size+predict_size//5], color = 'red', label = 'AR_hybride_crossfade', linestyle = '--', alpha = 0.5)
+    axs[1].legend()
+    axs[1].set_xlabel('Time (s)')
+    axs[1].set_ylabel('Amplitude')
+    axs[1].set_title('AR_hybride_crossfade')
+
+    axs[2].plot(time,song_1[pos:pos+predict_size+predict_size//5], color = 'blue', label = 'original', linestyle = '--', alpha = 0.5)
+    axs[2].legend()
+    axs[2].plot(time,predictions_persistance_freq_crossfade[pos:pos+predict_size+predict_size//5], color = 'red', label = 'persistance_freq_crossfade', linestyle = '--', alpha = 0.5)
+    axs[2].legend()
+    axs[2].set_xlabel('Time (s)')
+    axs[2].set_ylabel('Amplitude')
+    axs[2].set_title('persistance_freq_crossfade')
+
+    plt.tight_layout()
+    plt.show()'''
