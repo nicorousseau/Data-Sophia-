@@ -1,6 +1,5 @@
 import numpy as np
 from sklearn.linear_model import LinearRegression
-#import sklearn.linear_model as lm
 from scipy.signal import resample
 from statsmodels.tsa.ar_model import AutoReg
 
@@ -13,6 +12,16 @@ import utils
 
 #----------------------------------Baselines
 def filling_silence_persistance(audio, pos_gap, taille_paquet) :
+    """place des zéros dans les gaps de l'audio et applique la persistance sur les paquets de taille taille_paquet
+
+    Args:
+        audio (np.array): audio à traiter   
+        pos_gap (list): liste des positions des gaps dans l'audio
+        taille_paquet (int): nombre de sample d'un paquet perdu
+
+    Returns:
+        np.array, np.array: audio 0 filling, audio avec persistance
+    """
     audio_persistance = audio.copy()
     audio_gap_filled = audio.copy()
 
@@ -24,8 +33,20 @@ def filling_silence_persistance(audio, pos_gap, taille_paquet) :
         
     return audio_gap_filled, audio_persistance
 #----------------------------------AR adaptatif
-def forecast_adapt(train_data, n_pred, lags = 128, n_thresh = 1, clip_value = 1.3, crossfade_size = None):
+def forecast_adapt(train_data, n_pred, lags = 128, clip_value = 1.1, crossfade_size = None):
+    """prédit les n_pred prochains samples de train_data avec un modèle AR,
+    si la prédiction dépasse clip_value, on réduit le nombre de lags
 
+    Args:
+        train_data (np.array): _description_
+        n_pred (int): nb de sample à prédire
+        lags (int, optional): nb de paramètres de l'ar. Defaults to 128.
+        clip_value (float, optional): valeur de clip de l'audio. Defaults to 1.3.
+        crossfade_size (int, optional): nb de sample supplémentaire pour le crossfade. Defaults to None.
+
+    Returns:
+        np.array: prédiction du contexte train_data
+    """
     model = AutoReg(train_data, lags)
     model_fit = model.fit()
     n_train = len(train_data)
@@ -36,7 +57,7 @@ def forecast_adapt(train_data, n_pred, lags = 128, n_thresh = 1, clip_value = 1.
         end = n_train+ n_pred*(1 + 1//int(1/crossfade_size)) -1
     
     pred = model_fit.predict(start = n_train, end = end, dynamic = True)
-    if (np.sum(np.abs(pred) > clip_value) > n_thresh) and (lags >= 32): 
+    if (np.sum(np.abs(pred) > clip_value) > 1) and (lags >= 32): 
         #adf, pval, usedlag, nobs, crit_vals, icbest =  adfuller(train_data[-n_pred:])
         #print('ADF test statistic:', adf)
         #print('ADF p-values:', pval)
@@ -44,7 +65,7 @@ def forecast_adapt(train_data, n_pred, lags = 128, n_thresh = 1, clip_value = 1.
         #print('ADF number of observations:', nobs)
         #print('ADF critical values:', crit_vals)
         #print('ADF best information criterion:', icbest)
-        new_pred = forecast_adapt(train_data, n_pred, lags//2, n_thresh = n_thresh, crossfade_size = crossfade_size)
+        new_pred = forecast_adapt(train_data, n_pred, lags//2, crossfade_size = crossfade_size)
         if np.sum(np.abs(pred) > clip_value) > np.sum(np.abs(new_pred) > clip_value) : 
             return new_pred
         else :
@@ -53,6 +74,16 @@ def forecast_adapt(train_data, n_pred, lags = 128, n_thresh = 1, clip_value = 1.
 
 #----------------------------------Presistance fréquentielle
 def freq_persistance(audio, pos_gap, taille_paquet, sample_rate, n_harm = 15, crossfade_size = None):
+    """procède à une persistance fréquentielle du signal audio
+
+    Args:
+        audio (np.array): audio
+        pos_gap (list): liste des positions des gaps dans l'audio
+        n_harm (int, optional): nb d'harmoniques conservées. Defaults to 15.
+
+    Returns:
+        np.array: audio corrigé
+    """
     audio_corr = audio.copy()
     temps_paquet = taille_paquet/sample_rate
     taille_context = 1
@@ -95,7 +126,16 @@ def freq_persistance(audio, pos_gap, taille_paquet, sample_rate, n_harm = 15, cr
 #----------------------------------Process sur l'enveloppe
 
 
-def env_interpo(env, pos_gap, taille_paquet, train_size, order = 1):
+def env_interpo(env, pos_gap, taille_paquet, train_size):
+    """prédit l'enveloppe de l'audio par interpolation
+
+    Args:
+        env (np.array): enveloppe avec trou
+        train_size (int): taille du contexte
+
+    Returns:
+        np.array: enveloppe prédite
+    """
     env_pred = env.copy()
     for x in pos_gap :
         train_data = np.copy(env_pred[x-train_size:x])
@@ -106,17 +146,27 @@ def env_interpo(env, pos_gap, taille_paquet, train_size, order = 1):
             b = train_data[-1] - a*(x-1)
             return a*cord + b
         fv = np.vectorize(f)
-        #print(f"coef : {reg.coef_}")
-        #cs = scipy.interpolate.make_interp_spline(np.arange(x-train_size,x), train_data, k = order)#np.interp(np.arange(x, x+taille_paquet), np.arange(x-train_size,x), train_data)
-        data = np.arange(x, x+taille_paquet)#.reshape(-1,1)
+        data = np.arange(x, x+taille_paquet)
         pred = fv(data)
         mask_neg = pred < 0
         pred[mask_neg] = 0
         env_pred[x:x+taille_paquet] = pred
     return env_pred
 
-def env_predictions(audio_norm, env_max, env_min, pos_gap, taille_paquet, order = 128, train_size = None, adapt = False, clip_value = 1.3, crossfade_size = None):
+def env_predictions(audio_norm, env_max, env_min, pos_gap, taille_paquet, order = 128, train_size = None, adapt = False):
+    """process l'enveloppe et prédit les valeurs de l'audio avec un ar
 
+    Args:
+        audio_norm (np.array): audio déjà process pour ne pas avoir d'enveloppe
+        env_max (np.array): enveloppe du signal positif
+        env_min (np.array): enveloppe du siaal négatif
+        order (int, optional): nb de paramètres de l'ar utilisé. Defaults to 128.
+        train_size (_type_, optional): _description_. Defaults to None.
+
+
+    Returns:
+        np.array, np.array, np.array, np.array: audio prédit, enveloppe max prédite, enveloppe min prédite, audio normalisé prédit
+    """
     norm_to_fill = audio_norm.copy()
     
     norm = utils.audio_predictions(norm_to_fill, pos_gap, taille_paquet, order=order, train_size = train_size, adapt = adapt)
@@ -143,7 +193,8 @@ def env_predictions(audio_norm, env_max, env_min, pos_gap, taille_paquet, order 
 
 #----------------------------------AR Hybride 
 class AR_freq():
-
+    """classe pour prédire les valeurs de l'audio avec un modèle AR combiné avec la persistance fréquentielle
+    """
     def __init__(self, audio, old_sr, new_sr, nb_lags, nb_freq_kept, train_size):
 
         self.audio = audio
@@ -168,10 +219,14 @@ class AR_freq():
         self.diverge = None
     
     def _train_test(self):
+        """crée les données d'entrainement pour le modèle AR, en gardant les fréquences les plus importantes
 
+        Returns:
+            np.array, np.array: input de l'ar, label
+        """
         time = np.linspace(0,(self.train_size-1)/self.sr,self.train_size)
         self.sample = self.audio[self.pos-self.nb_lags-self.train_size:self.pos]
-        self.freq_kept, self.moy = utils.freq_max_sorted(self.audio, self.pos, self.train_size, self.sr, self.nb_freq_kept) #on utilise ensuite dans predict
+        self.freq_kept, self.moy = utils.freq_max_sorted(self.audio, self.pos, self.train_size, self.sr, self.nb_freq_kept) 
 
         input = []
         output = []
@@ -185,6 +240,11 @@ class AR_freq():
         return input, label 
 
     def fit(self, pos):
+        """entraine le modèle AR
+
+        Args:
+            pos (int): position du début du contexte
+        """
         self.pos = pos
         input, label = self._train_test()
         self.lineareg = LinearRegression()
@@ -192,6 +252,11 @@ class AR_freq():
         self.coef = self.lineareg.coef_[0]
 
     def predict(self, predict_size):
+        """prédit les valeurs de l'audio
+
+        Args:
+            predict_size (int): nb de sample à prédire
+        """
         self.predict_size = predict_size
         time = np.linspace(self.train_size/self.sr,(self.train_size+predict_size-1)/self.sr,predict_size)
         self.pred = []
@@ -212,6 +277,11 @@ class AR_freq():
             self.diverge = False
         
     def remove_freq(self,): 
+        """soustrait au signal initial le signal composé des harmoniques les + importantes
+
+        Returns:
+            np.array: "bruit" composé des fréquences non conservées
+        """
         train = self.audio[self.pos-self.train_size:self.pos]
         only_freq = []
         time = np.linspace(0,(self.train_size-1)/self.sr,self.train_size)

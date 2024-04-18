@@ -1,18 +1,21 @@
 import numpy as np
-#import matplotlib.pyplot as plt
 import statsmodels
 from scipy.io import wavfile
 from scipy.signal import resample
 import numpy.fft as fft
 import os
 import pathlib
-#from numpy.matlib import repmat
-#import scipy.interpolate
-#from sklearn.linear_model import LinearRegression
-#import time
 import methods
 
 def clip_audio(audio) : 
+    """clip the audio
+
+    Args:
+        audio (np.array): audio
+
+    Returns:
+        np.array: audio_clipped
+    """
     if np.max(np.abs(audio)) < 1 : 
         return audio
     else : 
@@ -65,6 +68,19 @@ def los_generation(taille_audio, taille_paquet, n_loss):
     
     return pos_gap
 def load_bach_data(directory, taille_paquet, n_loss_per_audio = 100, instr = 'saxphone.wav', resample_rate = None, normalise = False):
+    """fonction permettant de charger et de process les audios du dataset de bach
+
+    Args:
+        directory (path): path du dossier contenant les audios
+        taille_paquet (int): taille des paquet perdus
+        n_loss_per_audio (int, optional): nombre de paquets perdus dans l'audio. Defaults to 100.
+        instr (str, optional): l'instrument étudié. Defaults to 'saxphone.wav'.
+        resample_rate (_type_, optional): nouveau samplerate désiré. Defaults to None.
+        normalise (bool, optional): condition de normalisation. Defaults to False.
+
+    Returns:
+        list, list, np.array, np.array: liste des audios, liste des positions des gaps, audios concaténés, positions des gaps concaténées
+    """
     audio_filespath =[]
     audio_files_tuple = []
     if instr == 'all' :
@@ -103,6 +119,17 @@ def load_bach_data(directory, taille_paquet, n_loss_per_audio = 100, instr = 'sa
         conc_audio = np.concatenate((conc_audio, audio))
     return list_audio, list_pos_gap, np.array(conc_audio), np.array(pos_gap)
 def data_prep(audio, sample_rate, new_sample_rate = None, to_mono = False):
+    """fonction permettant de préparer un fichier audio donné pour le traitement (utilisé sur chopin)
+
+    Args:
+        audio (np.array): audio à traiter
+        sample_rate (int): samplerate initial
+        new_sample_rate (int, optional): nouveau samplerate désiré. Defaults to None.
+        to_mono (bool, optional): condition de transformation en mono. Defaults to False.
+
+    Returns:
+        np.array: audio processed
+    """
     max = np.iinfo(audio.dtype).max
     audio = audio.astype(np.float64)
     audio = audio/max
@@ -113,6 +140,15 @@ def data_prep(audio, sample_rate, new_sample_rate = None, to_mono = False):
     return audio
     
 def keeping_important_freq(array, nb_max):
+    """fonction permettant de réduire une fft à ses pics les plus importants (en valeur absolu)
+
+    Args:
+        array (np.array): fft du signal audio dont on veut extraire les fréquences
+        nb_max (int): nombre de fréquences à garder
+
+    Returns:
+        np.array, np.array: indices des fréquences gardées, fréquences gardées
+    """
     abs_array = np.abs(array)
     r = abs_array[1:]
     l = abs_array[:-1]
@@ -130,11 +166,26 @@ def keeping_important_freq(array, nb_max):
     return ind_kept, max_kept
 
 def freq_max_sorted(audio, pos, train_size, sr, nb_freq_kept):
+    """fonction extrayant les fréquences les plus importantes dans un signal audio
+    en prenant en compte la position du gap dans l'audio
+
+    Args:
+        audio (np.array): audio dont on veut extraire les fréquences
+        pos (int): position du gap dans l'audio
+        train_size (int): taille du contexte avant le gap
+        sr (int): samplerate de l'audio
+        nb_freq_kept (int): nombre de fréquences à garder
+
+    Returns:
+        liste, float: liste des fréquences conservés, moyenne de l'audio
+    """
     sample = audio[pos-train_size:pos]
     sample = np.pad(sample * np.hamming(train_size), (2000, 2000), 'constant')
+    
     fft_abs = np.abs(np.fft.fft(sample)[:len(sample)//2])
     moy = 2 * fft_abs[0]/train_size
     freq = np.linspace(0,sr/2 - sr/len(fft_abs), len(fft_abs))
+    
     r = fft_abs[1:]
     l = fft_abs[:-1]
     mask_l = r > l
@@ -153,11 +204,11 @@ def compute_env(audio, window_size = 200) : #fonction erronnée : utilise le fut
     Le reste du code peut-être conservé mais au vu d'utilisation future il faut changer cette fonction.
 
     Args:
-        audio (_type_): _description_
-        window_size (int, optional): _description_. Defaults to 200.
+        audio (np.array): audio dont on veut process l'enveloppe
+        window_size (int, optional): taille de l'enveloppe utilisée pour calculer l'enveloppe. Defaults to 200.
 
     Returns:
-        _type_: _description_
+        np.array, np.array: enveloppe positive, enveloppe négative
     """
     window_size = 200
     sample_pad = np.pad(audio, (window_size//2, window_size//2), mode='edge')
@@ -183,20 +234,20 @@ def compute_squared_audio(audio, env_max, env_min) :
     audio_norm[audio <0] = audio_neg_norm[audio<0]
     return audio_norm
 
-def audio_predictions(audio, pos_gap, taille_paquet, order = 128, train_size = None, adapt = False, clip_value = 1.3, crossfade_size = None, p_value = False):
-    """_summary_
+def audio_predictions(audio, pos_gap, taille_paquet, order = 128, train_size = None, adapt = False, crossfade_size = None):
+    """fonction mettant en place le processus ar sur l'audio, avec ou sans adaptation et crossfade
 
     Args:
-        audio (_type_): _description_
-        pos_gap (_type_): _description_
-        taille_paquet (_type_): _description_
-        order (int, optional): _description_. Defaults to 128.
-        adapt (bool, optional): _description_. Defaults to False.
-        crossfade_size (_type_, optional): _description_. Defaults to None.
+        audio (np.array): audio avec les gaps
+        pos_gap (list): liste des positions des gaps dans l'audio
+        taille_paquet (int): taille des paquets de données perdues
+        order (int, optional): nombre de paramètres de l'ar. Defaults to 128.
+        adapt (bool, optional): condition d'adaptation de l'ar. Defaults to False.
+        crossfade_size (int, optional): nombre de sample du crossfade. Defaults to None.
         p_value (bool, optional): _description_. Defaults to False.
 
     Returns:
-        _type_: _description_
+        np.array: audio complété par AR
     """
     AR_filled = audio.copy()
     if train_size is None : 
@@ -212,8 +263,6 @@ def audio_predictions(audio, pos_gap, taille_paquet, order = 128, train_size = N
             model = statsmodels.tsa.ar_model.AutoReg(train_data, order)
             model = model.fit()
             pred = model.predict(start = len(train_data), end = len(train_data)+taille_paquet-1, dynamic=True)
-            if p_value :
-                print(model.pvalues)
         
         if crossfade_size is not None : 
             n_cross = len(pred)-taille_paquet

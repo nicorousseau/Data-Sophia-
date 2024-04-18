@@ -3,7 +3,6 @@ import time
 import os 
 import pathlib
 from scipy.io import wavfile
-#from scipy.signal import resample
 
 import utils
 import benchmark
@@ -17,6 +16,15 @@ taille_paquet = int(temps_paquet *new_sample_rate) #nb_echantillons par paquet
 n_loss_per_audio = 120
 
 def ar_process(order, adapt = False) : 
+    """fonction qui applique les métriques aux résultats du traitement AR sur le signal conc_audio
+
+    Args:
+        order (int): ordre de l'AR
+        adapt (bool, optional): ar adaptatif ou non. Defaults to False.
+
+    Returns:
+        np.array, int: audio traité par l'ar, temps mis à le traiter
+    """
     start = time.time()
     ar = utils.audio_predictions(conc_audio, pos_gap, taille_paquet, order=order, crossfade_size=0.1, adapt = adapt)
     end = time.time()
@@ -33,6 +41,17 @@ def ar_process(order, adapt = False) :
     return utils.clip_audio(ar), process_time
 
 def process_env(audio_norm, env_max, env_min, order) : 
+    """fonction qui applique les métriques aux résultats du traitement AR avec processing sur l'enveloppe
+
+    Args:
+        audio_norm (np.array): audio déjà normalisé par le traitement pour enlever son enveloppe
+        env_max (np.array): enveloppe du signal positif
+        env_min (np.array): enveloppe du signal négatif
+        order (int): ordre de l'ar utilisé pour prédire le signal normalisé
+
+    Returns:
+        np.array, int: audio traité par le process, temps mis à le traiter
+    """
     start = time.time()
     env_audio, env_max_int, env_min_int, audio_norm_pred = methods.env_predictions(audio_norm, env_max, env_min, pos_gap, taille_paquet, order=order, train_size = 3* taille_paquet, crossfade_size = 0.1, adapt = True)
     end = time.time()
@@ -49,22 +68,20 @@ def process_env(audio_norm, env_max, env_min, order) :
     return env_audio, process_time
 
 
-#audio_path = r"C:\Users\hippo\OneDrive\Bureau\MINES\2A\T2_Data_Sophia\PROJET\Chopin_2.wav"
+#DATA processing
 audio_path = os.path.join(pathlib.Path().resolve(), "Chopin_2.wav")
 sample_rate, conc_audio = wavfile.read(audio_path)
 conc_audio = utils.data_prep(conc_audio, sample_rate, new_sample_rate = new_sample_rate, to_mono = True) 
 pos_gap = utils.los_generation(len(conc_audio), taille_paquet, n_loss = 1000)
 
-#pos_gap = pos_gap[:5]
-#conc_audio = conc_audio[:pos_gap[-1]+ 2*taille_paquet]
-#BENCHMARK PREP
+#------------------ BENCHMARK PREP
 nmses = []
 nmses_m = []
 mels_cs = []
 labels = []
 times = []
 audios_processed = []
-#Silence et Persistance
+#------------------ Silence et Persistance
 start = time.time()
 loss, persistance = methods.filling_silence_persistance(conc_audio, pos_gap, taille_paquet)
 end = time.time()
@@ -91,7 +108,7 @@ print("-------- 0 Filling and Persistance : Done ")
 print(time_loss_pers)
 
 
-#PERSISTANCE FREQUENTIELLE
+#------------------ PERSISTANCE FREQUENTIELLE
 start = time.time()
 freq_persistance = methods.freq_persistance(conc_audio, pos_gap, taille_paquet, sample_rate=new_sample_rate, n_harm = 10)
 end = time.time()
@@ -108,7 +125,7 @@ print("-------- Persistance Fréquentielle : Done ")
 print(time_pers_pers)
 
 
-# PERSITANCE FREQUENTIELLE par regression linéaire 
+#------------------ PERSITANCE FREQUENTIELLE par regression linéaire 
 nb_freq_kept = 10
 nb_lags = 0
 train_size = 1*taille_paquet
@@ -117,7 +134,7 @@ crossfade_size = int(0.1*predict_size)
 crossfade = np.linspace(-0.5,0.5, crossfade_size)
 cross_window = 1/(1+np.exp(crossfade))
 FREQ_reg = methods.AR_freq(conc_audio, new_sample_rate, new_sample_rate, nb_lags, nb_freq_kept, train_size)
-#AR_hybrid.initialise()
+#------------------ AR_hybrid.initialise()
 freq_reg = conc_audio.copy()
 start = time.time()
 for pos in pos_gap :
@@ -140,8 +157,8 @@ labels.append("PERS FREQ par REG")
 print("-------- PERS FREQ par REG : Done ")
 print(time_freq_reg)
 
-###
-#entrainement de l'AR sur le résidus
+
+#------------------ entrainement de l'AR sur le résidus
 nb_freq_kept = 20
 nb_lags = 0
 train_size = taille_paquet
@@ -181,7 +198,7 @@ print("-------- AR sur résidus : Done ")
 print(time_ar_residus)
 
 
-#64
+#------------------ AR 64
 ar64, time_64 = ar_process(64, adapt = False)
 times.append(time_64)
 audios_processed.append(ar64)
@@ -189,7 +206,7 @@ labels.append("ar64")
 
 
 
-#128
+#------------------ AR 128
 ar128, time_128 = ar_process(128, adapt = False)
 times.append(time_128)
 audios_processed.append(ar128)
@@ -198,19 +215,19 @@ labels.append("ar128")
 
 
 
-##256
+#------------------ AR 256
 ar256, time_256= ar_process(256, adapt = False)
 times.append(time_256)
 audios_processed.append(ar256)
 labels.append("ar256")
-
+#------------------ AR adaptatif 256
 aar256, times_a256= ar_process(256, adapt = True)
 times.append(times_a256)
 aar256 = utils.clip_audio(aar256)
 audios_processed.append(aar256)
 labels.append("aar256")
 
-
+#------------------ AR enveloppe 256
 env_max, env_min = utils.compute_env(conc_audio)
 audio_norm = utils.compute_squared_audio(conc_audio, env_max, env_min)
 env256, time_e256 = process_env(audio_norm, env_max, env_min, 256)
@@ -219,14 +236,13 @@ env256 = utils.clip_audio(env256)
 audios_processed.append(env256)
 labels.append("env256")
 
-#METHODE HYBRIDE AVEC REGRESSION 
+#------------------ METHODE HYBRIDE AVEC REGRESSION 
 nb_freq_kept = 20
 nb_lags = 256
 train_size = 3*taille_paquet
 predict_size = taille_paquet
 
 AR_hybrid = methods.AR_freq(conc_audio, new_sample_rate, new_sample_rate, nb_lags, nb_freq_kept, train_size)
-#AR_hybrid.initialise()
 ar_hybrid = conc_audio.copy()
 start = time.time()
 for pos in pos_gap :
@@ -250,7 +266,7 @@ print("-------- Régression hybride 256 : Done ")
 print(time_hybrid_reg)
 
 
-#BENCHMARK 
+#------------------ Affichage des métriques  
 print(f"Pour les méthodes NMSES puis MEL_CS:")
 for i in range(len(nmses_m)) :
     print(f"{labels[i]}")
@@ -289,14 +305,11 @@ plcmos_values = []
 print(len(labels), labels)
 print(len(nmses_m), nmses_m)
 print(len(mels_cs), mels_cs)
-#print(len(plcmos_values), plcmos_values)
 print(len(times), times)
 for i in range(len(audios_processed)) :
     audio = audios_processed[i]
     label = labels[i]
 
-    #predict.write_wav(audio, new_sample_rate, label, directory = directory, new_samplerate = plcmos_sr)
-    #audio_path = os.path.join(directory, label)
     plc_value = benchmark.plcmos_process(audio, plcmos_sr, new_sample_rate)
     plcmos_values.append(plc_value)
 
