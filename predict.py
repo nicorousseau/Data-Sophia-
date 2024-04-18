@@ -94,7 +94,7 @@ def los_generation(taille_audio, taille_paquet, n_loss):
     pos_gap = np.sort(pos_gap)
     pos_loss_decale = pos_gap[:n_loss-1]
     diff = pos_gap[1:n_loss]- pos_loss_decale
-    mask = diff > 2*taille_paquet
+    mask = diff > 4*taille_paquet
     pos_gap = pos_gap[1:n_loss][mask]
     
     return pos_gap
@@ -174,8 +174,9 @@ def audio_predictions(audio, pos_gap, taille_paquet, order = 128, train_size = N
         
         if crossfade_size is not None : 
             n_cross = len(pred)-taille_paquet
-            window = np.linspace(0, 1, n_cross)
-            crossfaded = pred[taille_paquet:]*(1-window) + window*AR_filled[x+taille_paquet:x+taille_paquet+n_cross]
+            crossfade = np.linspace(-0.5, 0.5, n_cross)
+            window = 1/(1+np.exp(crossfade))
+            crossfaded = pred[taille_paquet:]*window + (1-window)*AR_filled[x+taille_paquet:x+taille_paquet+n_cross]
             AR_filled[x+taille_paquet:x+taille_paquet+n_cross] = crossfaded
         AR_filled[x:x+taille_paquet] = pred[:taille_paquet]
     return AR_filled
@@ -287,35 +288,49 @@ def env_forecast(train_data, n_pred, lags = 128, clip_value = None, n_thresh = 1
         pred[pred > clip_value] = clip_value
     return pred 
 
-def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
+def freq_persistance(audio, pos_gap, taille_paquet, sample_rate, n_harm = 15, crossfade_size = None):
     audio_corr = audio.copy()
     temps_paquet = taille_paquet/sample_rate
     taille_context = 1#.5
     for pos in pos_gap :
         if pos>taille_context*taille_paquet :
-            taille_train = int(taille_context*taille_paquet)
+            train_size = int(taille_context*taille_paquet)
         else : 
-            taille_train = taille_paquet
-        train = audio_corr[pos-taille_train: pos].copy()
+            train_size = taille_paquet
+        train = audio_corr[pos-train_size: pos].copy()
+        m = np.mean(train)
         #Finding the period of the signal with autocorrelation
-        autocor = np.correlate(train, train, mode = 'same')
-        ind = _finding_local_max(autocor)
-        period = np.abs(ind[0]- ind[1])/sample_rate
-        #Fixing parameters needed
-        x = taille_context*temps_paquet / period
-        t_phased =  taille_context*temps_paquet - np.floor(x)*period + period #we add a period to stay in the right place
-        
-
         #computing fft and dephasing it 
-        fft_signal = fft.fft(train)
-        freq = fft.fftfreq(len(train), d=1/sample_rate)
-        dephasage = np.exp(1j*2*np.pi*t_phased*freq)
-        phase = np.angle(fft_signal)
-        fft_signal = fft_signal * dephasage
-        
-        pred = np.real(fft.ifft(fft_signal))[:taille_paquet]
-        audio_corr[pos:pos+taille_paquet] = pred 
-    
+        train = train*np.hamming(len(train))
+        fft_signal = fft.fft(train, 10*train_size)
+        freq = np.fft.fftfreq(len(fft_signal), d=1/sample_rate)
+        fft_abs = np.abs(fft_signal)
+        kept_ind, max_kept = keeping_important_freq(fft_abs, 2*n_harm)
+        freq_kept = freq[kept_ind]
+        fft_kept = fft_signal[kept_ind]
+        amp_kept = fft_abs[kept_ind]
+        if crossfade_size is not None : 
+            n_cross = crossfade_size
+            cross_window = np.linspace(-0.5, 0.5, n_cross)
+            cross_window = 1/(1+np.exp(cross_window))
+            time = np.arange(train_size, train_size+taille_paquet+n_cross)/sample_rate
+            pred = []
+            for i in range (len(time)) : 
+                pred.append(2*np.sum([fft_kept[:len(fft_kept)//2]*np.exp(2j*np.pi*freq_kept[:len(fft_kept)//2]*time[i])])/len(time))#norm)
+            pred = np.real(pred) +m
+            audio_corr[pos:pos+taille_paquet] = pred[:taille_paquet]
+            audio_corr[pos+taille_paquet: pos+taille_paquet+ n_cross] = cross_window*pred[taille_paquet:]+ (1-cross_window)*audio_corr[pos+taille_paquet: pos+taille_paquet+ n_cross]
+        else : 
+            time = np.arange(train_size, train_size+taille_paquet)/sample_rate
+            pred = []
+            for i in range (len(time)) : 
+                pred.append(2*np.sum([fft_kept[:len(fft_kept)//2]*np.exp(2j*np.pi*freq_kept[:len(fft_kept)//2]*time[i])])/len(time))#norm)
+            pred = np.real(pred) + m
+            #plt.plot(np.arange(0, train_size+taille_paquet)/sample_rate, audio_corr[pos-train_size:pos+taille_paquet])
+            #plt.plot(time,pred, 'g--')
+            #plt.show()
+            audio_corr[pos:pos+taille_paquet] = pred
+            
         #METHODE JUSTE AVEC LE CALCUL DU TEMPS
         #ws = audio_corr[pos-taille_paquet:pos]
         #wt = np.arange(0, taille_paquet) * 1/sample_rate
@@ -332,14 +347,12 @@ def freq_persistance(audio, pos_gap, taille_paquet, sample_rate):
         #idx_sort_maxloc = np.argsort(aTFws_p[idx_maxloc])[::-1]
         #sel_f_p = f_p[idx_maxloc[idx_sort_maxloc[:Lf]]]
         #sel_TFws_p = TFws_p[idx_maxloc[idx_sort_maxloc[:Lf]]]
-        #
         #temp = np.exp(2j * np.pi * np.outer(sel_f_p, wt_ )+ np.outer(np.angle(sel_TFws_p), np.ones(len(wt_))))
         #ws_rec_ = 2 * np.real(np.sum(repmat(np.abs(sel_TFws_p), wN_, 1).T * temp, axis=0)) / taille_paquet
         #fig, axs = plt.subplots(2)
         #axs[0].plot(audio_corr[pos-taille_paquet:pos+taille_paquet], 'b')
         #axs[1].plot(ws_rec_, 'r--')
         #plt.show()
-        #
     return audio_corr
 
 
@@ -406,7 +419,13 @@ def keeping_important_freq(array, nb_max):
 
     return ind_kept, max_kept
 
-
+def clip_audio(audio) : 
+    if np.max(np.abs(audio)) < 1 : 
+        return audio
+    else : 
+        audio[audio>1.] = 1.
+        audio[audio<-1.] = -1.
+    return audio
 
 def write_wav(audio, samplerate, name, new_samplerate = None,  directory = None, return_type = True) :
     """fonction convertissant les audios dans le bon format avant de les enregistrer en .wav

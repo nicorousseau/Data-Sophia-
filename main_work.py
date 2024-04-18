@@ -1,19 +1,20 @@
 import numpy as np
 import matplotlib.pyplot as plt 
-#from scipy.io import wavfile
+from scipy.io import wavfile
 #from scipy.signal import spectrogram
 from scipy.signal import resample
 #from librosa.display import specshow
 import statsmodels.tsa.ar_model #sinon fonctionne pas en utilisant predict.py
 import os
 import benchmark
-import Benchmark.plc_mos as plc_mos
+import PLCMOS.plc_mos as plc_mos
 import predict
 import time
 import pandas as pd
 #from AR_freq import AR_freq
-from nico_work import AR_hybride_2 as nico1
-from nico_work import persistance_freq as nico2
+from nico_work import AR_hybride_hippo as nico1
+from nico_work import  AR_hybride_hippo_copy as alter
+#from nico_work import persistance_freq as nico2
 
 new_sample_rate = 32000
 directory = r"C:\Users\hippo\OneDrive\Bureau\MINES\2A\T2_Data_Sophia\PROJET\Bach10_v1.1"
@@ -26,23 +27,25 @@ n_loss_per_audio = 120
 
 def ar_process(order, adapt = False) : 
     start = time.time()
-    ar_32 = predict.audio_predictions(conc_audio, pos_gap, taille_paquet, order=order, adapt = adapt)
+    ar = predict.audio_predictions(conc_audio, pos_gap, taille_paquet, order=order, crossfade_size=0.1, adapt = adapt)
     end = time.time()
+    ar = predict.clip_audio(ar)
     process_time = format(end-start)
-    nmse_AR_32_m, nmse_AR_32 = benchmark.nmse_mean(conc_audio, ar_32, pos_gap, taille_paquet)
-    mel_cs_AR_32 = benchmark.mel_cs(conc_audio, ar_32, new_sample_rate)
-    nmses.append(nmse_AR_32)
-    nmses_m.append(nmse_AR_32_m)
-    mels_cs.append(mel_cs_AR_32)
+    nmse_AR_m, nmse_AR = benchmark.nmse_mean(conc_audio, ar, pos_gap, taille_paquet)
+    mel_cs_AR = benchmark.mel_cs(conc_audio, ar, new_sample_rate)
+    nmses.append(nmse_AR)
+    nmses_m.append(nmse_AR_m)
+    mels_cs.append(mel_cs_AR)
     #labels.append(f"AR {order} {adapt}")
     print(f"-------- AR {order} adapt : {adapt} : Done ")
     print(f"Executed in : {process_time}")
-    return ar_32, process_time
+    return predict.clip_audio(ar), process_time
 
 def process_env(audio_norm, env_max, env_min, order) : 
     start = time.time()
-    env_audio, env_max_int, env_min_int, audio_norm_pred = predict.env_predictions(audio_norm, env_max, env_min, pos_gap, taille_paquet, order=order, train_size = 3* taille_paquet, adapt = True, ar_on_env = False)
+    env_audio, env_max_int, env_min_int, audio_norm_pred = predict.env_predictions(audio_norm, env_max, env_min, pos_gap, taille_paquet, order=order, train_size = 3* taille_paquet, crossfade_size = 0.1, adapt = True, ar_on_env = False)
     end = time.time()
+    env_audio = predict.clip_audio(env_audio)
     process_time = format(end-start)
     nmse_env_m, nmse_env_AR = benchmark.nmse_mean(conc_audio, env_audio, pos_gap, taille_paquet)
     mel_cs_env = benchmark.mel_cs(conc_audio, env_audio, new_sample_rate)
@@ -61,7 +64,21 @@ for instr in list_instr :
 
     if instr == 'all' :
         directory = os.path.join(directory, "All_instr")
-    list_audio, list_pos_gap, conc_audio, pos_gap = predict.load_data(directory, taille_paquet, n_loss_per_audio= n_loss_per_audio, instr = instr, resample_rate = new_sample_rate, normalise=True)
+    #list_audio, list_pos_gap, conc_audio, pos_gap = predict.load_data(directory, taille_paquet, n_loss_per_audio= n_loss_per_audio, instr = instr, resample_rate = new_sample_rate, normalise=True)
+    #AUDIO NICOLAS
+    path = r"C:\Users\hippo\OneDrive\Bureau\MINES\2A\T2_Data_Sophia\PROJET\Chopin_2.wav"
+    sample_rate, conc_audio = wavfile.read(path)
+    max = np.iinfo(conc_audio[0].dtype).max#//2
+    conc_audio = conc_audio.astype(np.float64)
+    conc_audio = conc_audio/max
+    print(sample_rate, conc_audio[0].dtype, conc_audio)
+    conc_audio = np.mean(conc_audio, axis=1)
+    conc_audio = resample(conc_audio, int(len(conc_audio)*new_sample_rate/sample_rate), window= "hamming", domain = "time")
+    
+    
+    pos_gap = predict.los_generation(len(conc_audio), taille_paquet, n_loss = 1000)
+    
+    
     print(f"{len(pos_gap)}, {len(conc_audio)}, {len(conc_audio)/new_sample_rate}")
     #pos_gap = pos_gap[:2]
     #conc_audio = conc_audio[:pos_gap[1]+ 2*taille_paquet]
@@ -86,6 +103,8 @@ for instr in list_instr :
     nmse_persistance_m, nmse_persistance = benchmark.nmse_mean(conc_audio, persistance, pos_gap, taille_paquet)
     mel_cs_silence = benchmark.mel_cs(conc_audio, loss, new_sample_rate)
     mel_cs_persistance = benchmark.mel_cs(conc_audio, persistance, new_sample_rate)
+    loss = predict.clip_audio(loss)
+    presistance = predict.clip_audio(persistance)
     audios_processed.append(loss)
     audios_processed.append(persistance)
     nmses.append(nmse_silence)
@@ -102,7 +121,7 @@ for instr in list_instr :
 
     #PERSISTANCE FREQUENTIELLE
     start = time.time()
-    freq_persistance = predict.freq_persistance(conc_audio, pos_gap, taille_paquet, sample_rate=new_sample_rate)
+    freq_persistance = predict.freq_persistance(conc_audio, pos_gap, taille_paquet, sample_rate=new_sample_rate, n_harm = 10)
     end = time.time()
     time_pers_pers = format(end - start)
     times.append(time_pers_pers)
@@ -117,48 +136,99 @@ for instr in list_instr :
     print(time_pers_pers)
 
 
+    # PERSISTANCE FREQUENTIELLE par regression
+    nb_freq_kept = 10
+    nb_lags = 0
+    train_size = 1*taille_paquet
+    predict_size = taille_paquet
+    crossfade_size = int(0.1*predict_size)
+    crossfade = np.linspace(-0.5,0.5, crossfade_size)
+    cross_window = 1/(1+np.exp(crossfade))
+    FREQ_reg = nico1.AR_freq(conc_audio, new_sample_rate, new_sample_rate, nb_lags, nb_freq_kept, train_size, taille_paquet)
+    #AR_hybrid.initialise()
+    freq_reg = conc_audio.copy()
+    start = time.time()
+    for pos in pos_gap :
+        FREQ_reg.fit(pos=pos)
+        FREQ_reg.predict(predict_size + crossfade_size)
+        freq_reg[pos: pos+taille_paquet] = FREQ_reg.pred[:predict_size]
+        freq_reg[pos+taille_paquet: pos+taille_paquet+crossfade_size] = FREQ_reg.pred[predict_size:]*cross_window + (1-cross_window)*freq_reg[pos+taille_paquet: pos+taille_paquet+crossfade_size]
+        
+    end = time.time()
+    time_freq_reg = format(end - start)
+    times.append(time_freq_reg)
+    freq_reg = predict.clip_audio(freq_reg)
+    audios_processed.append(freq_reg)
+    nmse_hy_m, nmses_hy = benchmark.nmse_mean(conc_audio, freq_reg, pos_gap, taille_paquet)
+    mel_cs_hy = benchmark.mel_cs(conc_audio, freq_reg, new_sample_rate)
+    nmses.append(nmses_hy)
+    nmses_m.append(nmse_hy_m)
+    mels_cs.append(mel_cs_hy)
+    labels.append("PERS FREQ par REG")
+    print("-------- PERS FREQ par REG : Done ")
+    print(time_freq_reg)
+    
+    ###
+    #entrainement de l'AR sur le résidus
+    nb_freq_kept = 20
+    nb_lags = 0
+    train_size = taille_paquet
+    predict_size = taille_paquet
+    audio_data = conc_audio.copy()
+    REG_freq = alter.AR_freq(audio_data, new_sample_rate, new_sample_rate, nb_lags, nb_freq_kept, train_size)
+    #AR_hybrid.initialise()
+    altered = conc_audio.copy()
+    predictions = []
+    start = time.time()
+    for pos in pos_gap :
+        REG_freq.fit(pos=pos)
+        REG_freq.predict(predict_size+crossfade_size)
+        #altered[pos:pos+predict_size] = 
+        predictions.append(REG_freq.pred)
+        new_train = REG_freq.remove_freq(predict_size)
+        altered[pos-train_size:pos] = new_train
+        
+        
+        #AR_hybrid.plot_coef()
+        
+    adapt_ar_128_1 = predict.audio_predictions(altered, pos_gap, taille_paquet+crossfade_size, order=256, train_size = 3*taille_paquet,adapt = True)
+    strange_hybrid = conc_audio.copy()
 
-    ## NICO PERSISTANCE FREQUENTIELLE 
-    ##nb_freq_kept = 50
-    ##nb_lags = 256
-    ##train_size = int(1.5*taille_paquet)
-    ##predict_size = taille_paquet
-#
-    #Reg_freq = nico2.Persistance_freq(conc_audio, new_sample_rate, new_sample_rate, nb_freq_kept, train_size)
-    ##AR_hybrid.initialise()
-    ##regression_freq = conc_audio.copy()
-    ##start = time.time()
-    ##for pos in pos_gap :
-    ##    Reg_freq.fit(pos=pos) #chgt la méthode de reg
-    ##    Reg_freq.predict(predict_size)
-    ##    regression_freq[pos: pos+taille_paquet] = Reg_freq.pred
-    ##end = time.time()
-    ##ref_freq_time = format(end-start)
-    ##times.append(ref_freq_time)
-    ##audios_processed.append(regression_freq)
-    ##nmse_reg_freq_m, nmses_reg_freq = benchmark.nmse_mean(conc_audio, regression_freq, pos_gap, taille_paquet)
-    ##mel_cs_hy_env = benchmark.mel_cs(conc_audio, regression_freq, new_sample_rate)
-    ##nmses.append(nmses_reg_freq)
-    ##nmses_m.append(nmse_reg_freq_m)
-    ##mels_cs.append(mel_cs_hy_env)
-    ##labels.append("Reg Freq")
+    for i in range(len(pos_gap)) : 
+        pos = pos_gap[i]
+        strange_hybrid[pos:pos+predict_size] = predictions[i][:predict_size] + adapt_ar_128_1[pos:pos+predict_size]
+        strange_hybrid[pos+predict_size:pos+predict_size+crossfade_size] = cross_window*predictions[i][predict_size:] + (1-cross_window)*adapt_ar_128_1[pos+predict_size:pos+predict_size+crossfade_size]
+    end = time.time()
+    time_ar_residus = format(end - start)
+    times.append(time_ar_residus)
+    strange_hybrid = predict.clip_audio(strange_hybrid)
+    audios_processed.append(strange_hybrid)
+    nmse_strhy_m, nmses_strhy = benchmark.nmse_mean(conc_audio, strange_hybrid, pos_gap, taille_paquet)
+    mel_cs_strhy = benchmark.mel_cs(conc_audio, strange_hybrid, new_sample_rate)
+    nmses.append(nmses_strhy)
+    nmses_m.append(nmse_strhy_m)
+    mels_cs.append(mel_cs_strhy)
+    labels.append("AR sur RésidusFreq")
+    print("-------- AR sur résidus : Done ")
+    print(time_ar_residus)
+    
     
     #64
-    #ar64, time_64 = ar_process(64, adapt = False)
-    #times.append(time_64)
-    #audios_processed.append(ar64)
-    #labels.append("ar64")
-    ###ar_adapt64 = ar_process(64, adapt = True)
-    ###env64 = process_env(audio_norm, env_max, env_min, 64)
-    ###audios_processed.append(env64)
-    ###labels.append("env_ar64")
+    ar64, time_64 = ar_process(64, adapt = False)
+    times.append(time_64)
+    audios_processed.append(ar64)
+    labels.append("ar64")
+    ##ar_adapt64 = ar_process(64, adapt = True)
+    ##env64 = process_env(audio_norm, env_max, env_min, 64)
+    ##audios_processed.append(env64)
+    ##labels.append("env_ar64")
 
 
     #128
-    #ar128, time_128 = ar_process(128, adapt = False)
-    #times.append(time_128)
-    #audios_processed.append(ar128)
-    #labels.append("ar128")
+    ar128, time_128 = ar_process(128, adapt = False)
+    times.append(time_128)
+    audios_processed.append(ar128)
+    labels.append("ar128")
     ###ar_adapt128 = ar_process(128, adapt = True)
     ###env128 = process_env(audio_norm, env_max, env_min, 128)
     ###audios_processed.append(env128)
@@ -167,28 +237,30 @@ for instr in list_instr :
 
 
     ##256
-    #ar256, time_256= ar_process(256, adapt = False)
-    #times.append(time_256)
-    #audios_processed.append(ar256)
-    #labels.append("ar256")
+    ar256, time_256= ar_process(256, adapt = False)
+    times.append(time_256)
+    audios_processed.append(ar256)
+    labels.append("ar256")
 
-    #aar256, times_a256= ar_process(256, adapt = True)
-    #times.append(times_a256)
-    #audios_processed.append(aar256)
-    #labels.append("aar256")
+    aar256, times_a256= ar_process(256, adapt = True)
+    times.append(times_a256)
+    aar256 = predict.clip_audio(aar256)
+    audios_processed.append(aar256)
+    labels.append("aar256")
 
 
-    #env_max, env_min = predict._compute_env(conc_audio)
-    #audio_norm = predict._compute_without_env_audio(conc_audio, env_max, env_min)
-    #env256, time_e256 = process_env(audio_norm, env_max, env_min, 256)
-    #times.append(time_e256)
-    #audios_processed.append(env256)
-    #labels.append("env256")
+    env_max, env_min = predict._compute_env(conc_audio)
+    audio_norm = predict._compute_without_env_audio(conc_audio, env_max, env_min)
+    env256, time_e256 = process_env(audio_norm, env_max, env_min, 256)
+    times.append(time_e256)
+    env256 = predict.clip_audio(env256)
+    audios_processed.append(env256)
+    labels.append("env256")
 
     #METHODE HYBRIDE AVEC REGRESSION 
     nb_freq_kept = 20
     nb_lags = 256
-    train_size = 2*taille_paquet
+    train_size = 3*taille_paquet
     predict_size = taille_paquet
 
     AR_hybrid = nico1.AR_freq(conc_audio, new_sample_rate, new_sample_rate, nb_lags, nb_freq_kept, train_size, taille_paquet)
@@ -197,11 +269,13 @@ for instr in list_instr :
     start = time.time()
     for pos in pos_gap :
         AR_hybrid.fit(pos=pos)
-        AR_hybrid.predict(predict_size)
-        ar_hybrid[pos: pos+taille_paquet] = AR_hybrid.pred
+        AR_hybrid.predict(predict_size+crossfade_size)
+        ar_hybrid[pos: pos+taille_paquet] = AR_hybrid.pred[:taille_paquet]
+        ar_hybrid[pos+taille_paquet: pos+taille_paquet+crossfade_size] = cross_window*AR_hybrid.pred[taille_paquet:] + (1-cross_window)*ar_hybrid[pos+taille_paquet:pos+taille_paquet+crossfade_size]
     end = time.time()
     time_hybrid_reg = format(end - start)
     times.append(time_hybrid_reg)
+    ar_hybrid = predict.clip_audio(ar_hybrid)
     audios_processed.append(ar_hybrid)
     nmse_hy_m, nmses_hy = benchmark.nmse_mean(conc_audio, ar_hybrid, pos_gap, taille_paquet)
     mel_cs_hy = benchmark.mel_cs(conc_audio, ar_hybrid, new_sample_rate)
@@ -238,8 +312,6 @@ for instr in list_instr :
     for i in range(len(audios_processed)) :
         audio = audios_processed[i]
         label = labels[i]
-        audio[audio>1] = 1.
-        audio[audio<-1] = -1.
         predict.write_wav(audio, samplerate = new_sample_rate, name= label, directory = directory)
 
     peaq_sr  = 48000
@@ -251,8 +323,6 @@ for instr in list_instr :
     for i in range(len(audios_processed)) :
         audio = audios_processed[i]
         label = labels[i]
-        audio[audio>1] = 1.
-        audio[audio<-1] = -1.
         predict.write_wav(audio, new_sample_rate, label, directory = directory, new_samplerate = peaq_sr)
 
     directory = r"C:\Users\hippo\OneDrive\Bureau\MINES\2A\T2_Data_Sophia\PROJET\Data-Sophia-\Results\metrics"
@@ -271,13 +341,18 @@ for instr in list_instr :
     for i in range(len(audios_processed)) :
         audio = audios_processed[i]
         label = labels[i]
-        audio[audio>1] = 1.
-        audio[audio<-1] = -1.
+
         #predict.write_wav(audio, new_sample_rate, label, directory = directory, new_samplerate = plcmos_sr)
         #audio_path = os.path.join(directory, label)
         plcmos_audio = resample(audio, int(len(audio)*plcmos_sr/new_sample_rate),window= "hamming", domain = "time")
         plcmos = plc_mos.PLCMOSEstimator()
-        plc_value = plcmos.run(plcmos_audio, plcmos_sr)
+        size_window = 10*plcmos_sr
+        plcmos_windowed = []
+        for i in range(len(plcmos_audio)//size_window-1):
+            plcmos_windowed.append(plcmos.run(plcmos_audio[i*size_window:(i+1)*size_window], plcmos_sr))
+        plcmos_windowed.append(plcmos.run(plcmos_audio[(len(plcmos_audio)//size_window)*size_window:-1], plcmos_sr))
+            
+        plc_value = np.mean(plcmos_windowed)
         plcmos_values.append(plc_value)
     
     nb_loss_tot = [len(pos_gap)]*len(times)
